@@ -73,6 +73,21 @@ class PlatformUnavailable:
 
 
 @dataclass(frozen=True, slots=True)
+class OneMoment:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class KeyboardMode:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class VoiceBack:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
 class Welcome:
     of: int
     section_titles: tuple[str, ...]
@@ -292,6 +307,9 @@ class ExamEnded:
 
 TemplateReply = (
     IdentifyPrompt
+    | KeyboardMode
+    | VoiceBack
+    | OneMoment
     | NotRegistered
     | PlatformUnavailable
     | Welcome
@@ -495,6 +513,18 @@ def _render_template(reply: TemplateReply) -> Spoken:
                 "The exam system cannot be reached right now. Please let the invigilator know.",
                 "prompt",
             )
+        case OneMoment():
+            return Spoken("One moment, please. Then say that again, or use the keyboard.", "prompt")
+        case KeyboardMode():
+            return Spoken(
+                "Voice is not available for a moment. Please use the keyboard: number keys "
+                "1 to 5 choose an option, Enter confirms, Escape cancels, R repeats, and N "
+                "and P move to the next and previous question. I will tell you when voice "
+                "is back.",
+                "prompt",
+            )
+        case VoiceBack():
+            return Spoken("Voice is back. You can speak again.", "prompt")
         case Welcome(of=of, section_titles=titles, duration_s=duration):
             sections = (
                 f" in {_plural(len(titles), 'section')}: {_join(list(titles))}" if titles else ""

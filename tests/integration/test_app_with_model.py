@@ -17,7 +17,8 @@ from voice_agent.adapters.fake_adapter import FakeAdapter
 from voice_agent.api.runtime import Runtime
 from voice_agent.config import LlmSettings, Settings
 from voice_agent.contract import SCHEMA_VERSION
-from voice_agent.main import _every, _keep_model, create_app
+from voice_agent.main import _every, _keep_model, _watch_load, create_app
+from voice_agent.runtime.degrade import Degrader, Level
 
 FAKE = Path(__file__).parents[1] / "fakes" / "fake_llama_server.py"
 TOKEN = "device-token-for-tests-0001"
@@ -152,3 +153,44 @@ async def test_background_work_survives_a_failure() -> None:
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+class _Manager:
+    def __init__(self) -> None:
+        self.level = Level.NORMAL
+        self.refusals = 0
+
+    def recent_model_refusals(self) -> int:
+        return self.refusals
+
+    def set_level(self, level: Level) -> None:
+        self.level = level
+
+    def current(self) -> Level:  # read through a call: mypy would keep a narrowed value
+        return self.level
+
+
+class _Runtime:
+    def __init__(self) -> None:
+        self.manager = _Manager()
+        self.model = "running"
+
+    def language_model_state(self) -> str:
+        return self.model
+
+
+async def test_the_load_watch_moves_the_level() -> None:
+    rt = _Runtime()
+    watch = _watch_load(rt, Degrader(calm_s=0))  # type: ignore[arg-type]
+    await watch()
+    assert rt.manager.current() is Level.NORMAL
+    rt.model = "down"
+    await watch()
+    assert rt.manager.current() is Level.RULES_ONLY
+    rt.model = "running"
+    await watch()  # calm spell starts
+    await watch()
+    assert rt.manager.current() is Level.NORMAL
+    rt.manager.refusals = 3  # running, but overloaded
+    await watch()
+    assert rt.manager.current() is Level.RULES_ONLY

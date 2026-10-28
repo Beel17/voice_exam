@@ -23,6 +23,9 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from voice_agent.adapters.base import AdapterRejected, AdapterUnavailable
 from voice_agent.contract import (
+    AUDIO_BYTES_PER_SECOND,
+    MAX_AUDIO_FRAME_BYTES,
+    MAX_UTTERANCE_SECONDS,
     SCHEMA_VERSION,
     BadMessage,
     Error,
@@ -37,20 +40,26 @@ from voice_agent.contract import (
     Say,
     ServerMessage,
     SessionInfo,
+    Stop,
     TalkEnd,
     TalkStart,
     TextInput,
     parse_client_message,
 )
+from voice_agent.runtime.degrade import Level
 from voice_agent.runtime.limits import RateLimiter
+from voice_agent.runtime.pools import PoolBusy
 from voice_agent.session.manager import LiveSession, NotFound, SessionManager
 from voice_agent.session.replies import (
     IdentifyPrompt,
+    KeyboardMode,
     NotRegistered,
+    OneMoment,
     PlatformUnavailable,
     TemplateReply,
     render,
 )
+from voice_agent.speech.stt import Recognizer
 
 log = logging.getLogger(__name__)
 
@@ -98,12 +107,13 @@ async def serve(
     hub: Hub,
     device_tokens: Iterable[str],
     max_messages_per_10s: int,
+    recognizer: Recognizer | None = None,
 ) -> None:
     await ws.accept()
     hello = await _hello(ws, device_tokens)
     if hello is None:
         return
-    connection = _Connection(ws, manager, hub, max_messages_per_10s)
+    connection = _Connection(ws, manager, hub, max_messages_per_10s, recognizer)
     try:
         await connection.start(hello)
         await connection.run()
@@ -144,14 +154,24 @@ async def _refuse(ws: WebSocket, code: ErrorCode, message: str, close_code: int)
 
 class _Connection:
     def __init__(
-        self, ws: WebSocket, manager: SessionManager, hub: Hub, max_messages_per_10s: int
+        self,
+        ws: WebSocket,
+        manager: SessionManager,
+        hub: Hub,
+        max_messages_per_10s: int,
+        recognizer: Recognizer | None,
     ) -> None:
         self._ws = ws
         self._manager = manager
         self._hub = hub
+        self._recognizer = recognizer
         self._session: LiveSession | None = None
         self._writer: asyncio.Task[None] | None = None
         self._limiter = RateLimiter(max_messages_per_10s, FRAMES_WINDOW_S)
+        # Audio while the talk key is held; None when it is up.
+        self._capture: bytearray | None = None
+        # Replies sent to the PC that it has not finished playing, for barge-in.
+        self._playing: set[str] = set()
 
     async def start(self, hello: Hello) -> None:
         if hello.resume_session_id is not None:
@@ -169,12 +189,13 @@ class _Connection:
                 raise WebSocketDisconnect(frame.get("code", 1000))
             if self._session is not None and not self._hub.owns(self._session.session_id, self._ws):
                 return  # superseded; the hub has already told the client and closed
+            if (audio := frame.get("bytes")) is not None:
+                # Audio is bounded by its own per-utterance cap, not the message limit:
+                # ten frames a second is normal speech, not flooding.
+                await self._audio(audio)
+                continue
             if not self._limiter.allow("frames"):
                 await _send(self._ws, _error(ErrorCode.RATE_LIMITED, "Too many messages."))
-                continue
-            if frame.get("bytes") is not None:
-                # Audio arrives with the speech layer (phase 2); text and keys work now.
-                await _send(self._ws, _error(ErrorCode.BAD_MESSAGE, "Audio is not enabled."))
                 continue
             try:
                 message = parse_client_message(frame.get("text") or "")
@@ -198,10 +219,56 @@ class _Connection:
                 await self._manager.handle_key(self._session, key)
             case TextInput() | KeyPress():
                 await _send(self._ws, _error(ErrorCode.NOT_IDENTIFIED, "Sign in first."))
-            case TalkStart() | TalkEnd() | PlaybackDone():
-                pass  # meaningful once audio is enabled (phase 2)
+            case PlaybackDone(utterance_id=utterance_id):
+                self._playing.discard(utterance_id)
+            case TalkStart() | TalkEnd() if self._recognizer is None:
+                await _send(self._ws, _error(ErrorCode.BAD_MESSAGE, "Audio is not enabled."))
+            case TalkStart() | TalkEnd() if self._session is None:
+                await _send(self._ws, _error(ErrorCode.NOT_IDENTIFIED, "Sign in first."))
+            case TalkStart():
+                await self._talk_start()
+            case TalkEnd():
+                await self._talk_end()
             case _:
                 await _send(self._ws, _error(ErrorCode.BAD_MESSAGE, "Not expected now."))
+
+    # --- Talking ----------------------------------------------------------------------
+
+    async def _talk_start(self) -> None:
+        # Barge-in: pressing the talk key silences whatever is playing, at once.
+        for utterance_id in sorted(self._playing):
+            await _send(self._ws, Stop(utterance_id=utterance_id))
+        self._playing.clear()
+        if self._manager.level >= Level.KEYBOARD:
+            await self._say(KeyboardMode())
+            return
+        self._capture = bytearray()
+
+    async def _audio(self, chunk: bytes) -> None:
+        if self._capture is None:
+            if self._recognizer is None or self._manager.level < Level.KEYBOARD:
+                await _send(self._ws, _error(ErrorCode.BAD_MESSAGE, "Audio without the talk key."))
+            return  # in keyboard mode, audio already in flight is simply dropped
+        if len(chunk) % 2 or len(chunk) > MAX_AUDIO_FRAME_BYTES:
+            await _send(self._ws, _error(ErrorCode.BAD_MESSAGE, "Audio frame of the wrong size."))
+            return
+        room = MAX_UTTERANCE_SECONDS * AUDIO_BYTES_PER_SECOND - len(self._capture)
+        self._capture += chunk[: max(0, room)]  # beyond 30 s is dropped, not an error
+
+    async def _talk_end(self) -> None:
+        pcm, self._capture = self._capture, None
+        if pcm is None:
+            return  # keyboard mode, or a second release: nothing was being captured
+        assert self._session is not None and self._recognizer is not None
+        try:
+            heard = await self._recognizer.recognize(bytes(pcm))
+        except PoolBusy:
+            await _send(self._ws, _error(ErrorCode.BUSY, "Recognition is busy."))
+            await self._say(OneMoment())
+            return
+        session = self._session
+        session.emit(Heard(text=heard.text, confidence=heard.confidence, seq=session.state.seq + 1))
+        await self._manager.handle_text(session, heard.text)
 
     async def _login(self, reg_no: str, exam_code: str) -> None:
         try:
@@ -226,9 +293,12 @@ class _Connection:
         with contextlib.suppress(Exception):  # the socket closing ends the writer too
             while self._hub.owns(session.session_id, self._ws):
                 message = await queue.get()
+                if isinstance(message, Say):
+                    self._playing.add(message.utterance_id)
                 await _send(self._ws, message)
 
     async def _say(self, reply: TemplateReply) -> None:
+        """A reply outside any session's script (sign-in, busy, keyboard mode)."""
         for n, spoken in enumerate(render(reply)):
             await _send(self._ws, Say(utterance_id=f"pre.{n}", text=spoken.text, kind=spoken.kind))
 

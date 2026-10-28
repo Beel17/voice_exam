@@ -49,7 +49,7 @@ class Status(_Body):
     unsynced_writes: int
     language_model: Literal["running", "down", "disabled"]
     language_model_restarts: int
-    # 0 normal; 1 rules only (the language model is off or down). Speech levels: phase 2.
+    # 0 normal, 1 rules only, 2 fixed prompts, 3 keyboard (see runtime/degrade.py).
     degradation_level: int
 
 
@@ -82,7 +82,7 @@ async def status_(rt: Annotated[Runtime, Depends(admin)]) -> Status:
         unsynced_writes=len(await rt.store.pending_writes()),
         language_model=model,
         language_model_restarts=rt.llm_server.restarts if rt.llm_server else 0,
-        degradation_level=0 if model == "running" else 1,
+        degradation_level=rt.manager.level,
     )
 
 

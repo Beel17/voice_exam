@@ -17,8 +17,10 @@ from voice_agent.adapters.fake_adapter import FakeAdapter
 from voice_agent.api import http, ws
 from voice_agent.api.runtime import Runtime
 from voice_agent.config import Settings
+from voice_agent.runtime.degrade import Degrader, Load
 from voice_agent.session.events import SessionStore
 from voice_agent.session.manager import SessionManager
+from voice_agent.speech.stt import Recognizer
 from voice_agent.understanding.llm import LlamaServer, LlmUnderstander, llama_server_command
 
 log = logging.getLogger(__name__)
@@ -28,9 +30,15 @@ Work = Callable[[], Awaitable[None]]
 OUTBOX_EVERY_S: Final = 5.0
 TIME_EVERY_S: Final = 30.0
 MODEL_CHECK_EVERY_S: Final = 5.0
+LOAD_CHECK_EVERY_S: Final = 1.0
 
 
-def create_app(settings: Settings, *, adapter: ExamDataAdapter | None = None) -> FastAPI:
+def create_app(
+    settings: Settings,
+    *,
+    adapter: ExamDataAdapter | None = None,
+    recognizer: Recognizer | None = None,
+) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         store = await SessionStore.open(settings.data_dir / "sessions.db")
@@ -43,10 +51,14 @@ def create_app(settings: Settings, *, adapter: ExamDataAdapter | None = None) ->
             max_utterance_chars=settings.limits.max_utterance_chars,
             understander=understander,
         )
-        app.state.runtime = Runtime(settings, store, manager, ws.Hub(), llm_server)
+        runtime = Runtime(settings, store, manager, ws.Hub(), llm_server, recognizer)
+        app.state.runtime = runtime
+        watch_load = _watch_load(runtime, Degrader())
+        await watch_load()  # the level is right from the first connection
         background = [
             asyncio.create_task(_every(OUTBOX_EVERY_S, manager.retry_outbox)),
             asyncio.create_task(_every(TIME_EVERY_S, manager.check_time)),
+            asyncio.create_task(_every(LOAD_CHECK_EVERY_S, watch_load)),
         ]
         if llm_server is not None and understander is not None:
             background.append(
@@ -79,6 +91,7 @@ def create_app(settings: Settings, *, adapter: ExamDataAdapter | None = None) ->
             rt.hub,
             rt.settings.device_token_sha256,
             rt.settings.limits.max_messages_per_10s,
+            rt.recognizer,
         )
 
     return app
@@ -140,6 +153,20 @@ async def _start_language_model(
     except Exception:
         log.exception("language model unavailable; running on rules only")
     return server, understander
+
+
+def _watch_load(runtime: Runtime, degrader: Degrader) -> Work:
+    async def check() -> None:
+        load = Load(
+            language_model_up=runtime.language_model_state() == "running",
+            language_model_refusals=runtime.manager.recent_model_refusals(),
+        )
+        level = degrader.update(load)
+        if level != runtime.manager.level:
+            log.warning("degradation level %d -> %d", runtime.manager.level, level)
+            runtime.manager.set_level(level)
+
+    return check
 
 
 def _keep_model(server: LlamaServer, understander: LlmUnderstander) -> Work:

@@ -74,9 +74,11 @@ class Resumed(_Event):
     kind: Literal["resumed"] = "resumed"
 
 
-# busy..disabled: the model could not be asked. ungrounded: it proposed an answer the
-# sentence did not name, which is never accepted.
-Fallback = Literal["busy", "rate_limited", "unavailable", "timeout", "disabled", "ungrounded"]
+# busy..degraded: the model could not or should not be asked (degraded: the service is
+# on rules only). ungrounded: it proposed an answer the sentence did not name.
+Fallback = Literal[
+    "busy", "rate_limited", "unavailable", "timeout", "disabled", "degraded", "ungrounded"
+]
 
 
 class Understood(_Event):

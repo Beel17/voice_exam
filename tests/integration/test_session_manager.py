@@ -15,6 +15,7 @@ from voice_agent.adapters.base import (
 )
 from voice_agent.adapters.fake_adapter import FakeAdapter, load_fixture
 from voice_agent.contract import Say, State
+from voice_agent.runtime.degrade import Level
 from voice_agent.session import machine as m
 from voice_agent.session.events import SessionStore
 from voice_agent.session.manager import LiveSession, NotFound, SessionManager
@@ -537,3 +538,58 @@ async def test_overlong_sentences_never_reach_the_model(h: Harness) -> None:
     s = await with_model(h, model)
     await h.manager.handle_text(s, "word " * 100)
     assert model.calls == []
+
+
+# --- Degradation ------------------------------------------------------------------------
+
+
+async def test_at_rules_only_the_model_is_not_asked(h: Harness) -> None:
+    model = ScriptedModel(
+        {"hmm I reckon it is probably B": i.Answer(args=i.ChoiceArgs(choice="B"))}
+    )
+    s = await with_model(h, model)
+    h.manager.set_level(Level.RULES_ONLY)
+    await h.manager.handle_text(s, "hmm I reckon it is probably B")
+    assert model.calls == []
+    assert said(s).startswith("Sorry, I did not catch that.")
+    stored = (await h.store.load(s.session_id))[-1].event
+    assert isinstance(stored, m.Understood) and stored.fallback == "degraded"
+    await h.manager.handle_text(s, "B")  # the rules still work
+    assert "you chose option B" in said(s)
+
+
+@pytest.mark.parametrize(
+    ("reason", "counted"),
+    [("busy", 1), ("timeout", 1), ("rate_limited", 0), ("unavailable", 0)],
+)
+async def test_only_overload_counts_against_the_model(
+    h: Harness, reason: str, counted: int
+) -> None:
+    s = await with_model(h, ScriptedModel({"odd": LlmFallback(reason)}))  # type: ignore[arg-type]
+    await h.manager.handle_text(s, "odd")
+    assert h.manager.recent_model_refusals() == counted
+
+
+async def test_keyboard_mode_is_announced_once_each_way(h: Harness) -> None:
+    s = await h.login()
+    s.drain()
+    h.manager.set_level(Level.RULES_ONLY)
+    h.manager.set_level(Level.FIXED_PROMPTS)
+    assert said(s) == ""  # lower levels change behaviour silently
+    h.manager.set_level(Level.KEYBOARD)
+    assert said(s).startswith("Voice is not available for a moment.")
+    h.manager.set_level(Level.KEYBOARD)
+    assert said(s) == ""
+    h.manager.set_level(Level.RULES_ONLY)
+    assert said(s) == "Voice is back. You can speak again."
+
+
+async def test_finished_exams_hear_no_announcements(h: Harness) -> None:
+    s = await h.login()
+    await h.say(s, i.Confirm())
+    await h.say(s, i.Submit())
+    await h.say(s, i.Confirm())
+    await h.say(s, i.Confirm())
+    s.drain()
+    h.manager.set_level(Level.KEYBOARD)
+    assert said(s) == ""

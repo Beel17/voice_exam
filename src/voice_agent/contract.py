@@ -17,6 +17,14 @@ MAX_TEXT_CHARS = 500
 # Checked before JSON parsing so an oversized frame costs nothing to reject.
 MAX_FRAME_BYTES = 4096
 
+# Audio up: 16 kHz mono 16-bit little-endian PCM, sent in 20-100 ms frames while the talk
+# key is held. A frame may be up to 200 ms (a busy client may batch two); one press of the
+# talk key may hold up to 30 s, far longer than any command.
+AUDIO_SAMPLE_RATE = 16_000
+AUDIO_BYTES_PER_SECOND = AUDIO_SAMPLE_RATE * 2
+MAX_AUDIO_FRAME_BYTES = AUDIO_BYTES_PER_SECOND // 5
+MAX_UTTERANCE_SECONDS = 30
+
 OptionLetter = Literal["A", "B", "C", "D", "E"]
 Key = Literal["1", "2", "3", "4", "5", "R", "N", "P", "Enter", "Esc"]
 SayKind = Literal["question", "options", "prompt", "confirm"]

@@ -7,6 +7,7 @@ from voice_agent.api.ws import Hub
 from voice_agent.config import Settings
 from voice_agent.session.events import SessionStore
 from voice_agent.session.manager import SessionManager
+from voice_agent.speech.stt import Recognizer
 from voice_agent.understanding.llm import LlamaServer
 
 
@@ -17,6 +18,7 @@ class Runtime:
     manager: SessionManager
     hub: Hub
     llm_server: LlamaServer | None
+    recognizer: Recognizer | None = None
 
     def language_model_state(self) -> Literal["running", "down", "disabled"]:
         if not self.settings.llm.enabled:

@@ -11,16 +11,25 @@ replay exactly. Different sessions run concurrently.
 import asyncio
 import time
 import uuid
+from collections import deque
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Final
 
 from voice_agent.adapters.base import AdapterError, AdapterUnavailable, ExamDataAdapter, Question
 from voice_agent.contract import Key, Say, ServerMessage
+from voice_agent.runtime.degrade import Level
 from voice_agent.session import machine as m
 from voice_agent.session.events import SessionRecord, SessionStore
 from voice_agent.session.outbox import deliver, items_for
-from voice_agent.session.replies import QuestionNotAvailable, Reply, needs_question, render
+from voice_agent.session.replies import (
+    KeyboardMode,
+    QuestionNotAvailable,
+    Reply,
+    VoiceBack,
+    needs_question,
+    render,
+)
 from voice_agent.understanding import grammar
 from voice_agent.understanding import intents as i
 from voice_agent.understanding.intents import Intent, action_for_key
@@ -84,6 +93,9 @@ class SessionManager:
         self._timeout = adapter_timeout_s
         self._max_utterance_chars = max_utterance_chars
         self._understander = understander
+        self._level = Level.NORMAL
+        self._announcements = 0
+        self._model_refusals: deque[float] = deque(maxlen=1000)
         self._warnings = tuple(sorted(time_warnings_min, reverse=True))
         self._new_id = new_session_id
         self._clock = clock
@@ -95,6 +107,30 @@ class SessionManager:
     @property
     def live_count(self) -> int:
         return len(self._live)
+
+    # --- Degradation ------------------------------------------------------------------
+
+    @property
+    def level(self) -> Level:
+        return self._level
+
+    def recent_model_refusals(self, window_s: float = 30.0) -> int:
+        cutoff = time.monotonic() - window_s
+        return sum(1 for t in self._model_refusals if t >= cutoff)
+
+    def set_level(self, level: Level) -> None:
+        """Change the degradation level, telling candidates when the keyboard takes over
+        from voice and when voice comes back. Lower levels change behaviour silently."""
+        previous, self._level = self._level, level
+        if (previous >= Level.KEYBOARD) == (level >= Level.KEYBOARD):
+            return
+        reply: Reply = KeyboardMode() if level >= Level.KEYBOARD else VoiceBack()
+        self._announcements += 1
+        for session in self._live.values():
+            if session.state.phase is not m.Phase.ENDED:
+                for n, spoken in enumerate(render(reply)):
+                    utterance_id = f"sys{self._announcements}.{n}"
+                    session.emit(Say(utterance_id=utterance_id, text=spoken.text, kind=spoken.kind))
 
     # --- Starting and resuming --------------------------------------------------------
 
@@ -192,17 +228,21 @@ class SessionManager:
     async def _understand(
         self, session: LiveSession, text: str
     ) -> tuple[Intent, m.Source, m.Fallback | None]:
-        if len(text) > self._max_utterance_chars:
+        if not text or len(text) > self._max_utterance_chars:
             return i.Unclear(), m.Source.RULES, None
         if (intent := grammar.match(text, self._rules_context(session))) is not None:
             return intent, m.Source.RULES, None
         if self._understander is None:
             return i.Unclear(), m.Source.RULES, "disabled"
+        if self._level >= Level.RULES_ONLY:
+            return i.Unclear(), m.Source.RULES, "degraded"
         try:
             intent = await self._understander.understand(
                 session.session_id, text, self._llm_context(session)
             )
         except LlmFallback as e:
+            if e.reason in ("busy", "timeout"):  # the model is short of capacity
+                self._model_refusals.append(time.monotonic())
             return i.Unclear(), m.Source.RULES, e.reason
         if isinstance(intent, i.Answer | i.ChangeAnswer) and not grammar.names_option(
             text, intent.args.choice, session.state.option_count
