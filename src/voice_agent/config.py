@@ -39,7 +39,7 @@ class LlmSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     enabled: bool = True
-    server_binary: Path = Path("models/llama-server")
+    server_binary: Path = Path("models/llama.cpp/llama-server")
     model_file: Path = Path("models/qwen2.5-1.5b-instruct-q4_k_m.gguf")
     port: int = Field(default=8766, ge=1, le=65535)
     threads: int = Field(default=2, ge=1, le=64)

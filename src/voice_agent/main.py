@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import shutil
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import Final
 
 from fastapi import FastAPI, WebSocket
 
+from voice_agent import selfcheck
 from voice_agent.adapters.base import ExamDataAdapter
 from voice_agent.adapters.fake_adapter import FakeAdapter
 from voice_agent.api import http, ws
@@ -106,6 +108,16 @@ async def _start_language_model(
             cfg.model_file,
         )
         return None, None
+    began = time.perf_counter()
+    problems = await asyncio.to_thread(
+        selfcheck.model_file_problems, settings.models_dir, Path(binary), cfg.model_file
+    )
+    if problems:
+        for problem in problems:
+            log.error("model check failed: %s", problem)
+        log.error("language model not used; running on rules only")
+        return None, None
+    log.info("model files verified in %.1f s", time.perf_counter() - began)
     command = llama_server_command(
         Path(binary),
         cfg.model_file,

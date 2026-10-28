@@ -13,7 +13,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Final, Literal
+from typing import Final
 
 from voice_agent.adapters.base import AdapterError, AdapterUnavailable, ExamDataAdapter, Question
 from voice_agent.contract import Key, Say, ServerMessage
@@ -24,7 +24,7 @@ from voice_agent.session.replies import QuestionNotAvailable, Reply, needs_quest
 from voice_agent.understanding import grammar
 from voice_agent.understanding import intents as i
 from voice_agent.understanding.intents import Intent, action_for_key
-from voice_agent.understanding.llm import FallbackReason, LlmContext, LlmFallback, Understander
+from voice_agent.understanding.llm import LlmContext, LlmFallback, Understander
 
 # Enough for any one turn; a client that stops reading loses the oldest messages, never
 # blocks the session.
@@ -191,7 +191,7 @@ class SessionManager:
 
     async def _understand(
         self, session: LiveSession, text: str
-    ) -> tuple[Intent, m.Source, FallbackReason | Literal["disabled"] | None]:
+    ) -> tuple[Intent, m.Source, m.Fallback | None]:
         if len(text) > self._max_utterance_chars:
             return i.Unclear(), m.Source.RULES, None
         if (intent := grammar.match(text, self._rules_context(session))) is not None:
@@ -204,6 +204,10 @@ class SessionManager:
             )
         except LlmFallback as e:
             return i.Unclear(), m.Source.RULES, e.reason
+        if isinstance(intent, i.Answer | i.ChangeAnswer) and not grammar.names_option(
+            text, intent.args.choice, session.state.option_count
+        ):
+            return i.Unclear(), m.Source.LLM, "ungrounded"
         return intent, m.Source.LLM, None
 
     def _llm_context(self, session: LiveSession) -> LlmContext:
@@ -230,7 +234,7 @@ class SessionManager:
         text: str | None,
         *,
         latency_ms: int | None = None,
-        fallback: FallbackReason | Literal["disabled"] | None = None,
+        fallback: m.Fallback | None = None,
     ) -> None:
         if text is not None:
             text = text[: self._max_utterance_chars]  # the audit log keeps what was used

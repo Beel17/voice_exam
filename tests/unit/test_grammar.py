@@ -4,7 +4,13 @@ import pytest
 
 from voice_agent.adapters.fake_adapter import load_fixture
 from voice_agent.understanding import intents as i
-from voice_agent.understanding.grammar import MAX_RULE_CHARS, RulesContext, match, normalise
+from voice_agent.understanding.grammar import (
+    MAX_RULE_CHARS,
+    RulesContext,
+    match,
+    names_option,
+    normalise,
+)
 
 SAMPLE = load_fixture("sample_60")
 SECTIONS = tuple(s.title for s in SAMPLE.outline.sections)
@@ -273,3 +279,26 @@ def test_rules_are_fast() -> None:
             match(text, Q50)
     per_call_ms = (time.perf_counter() - start) * 1000 / (20 * len(sentences))
     assert per_call_ms < 1.0, f"{per_call_ms:.3f} ms per sentence"
+
+
+# --- What the model may not decide ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "choice", "count", "named"),
+    [
+        ("hmm I reckon it is probably B", "B", 4, True),
+        ("I will take option number four", "D", 4, True),
+        ("the fourth one please", "D", 4, True),
+        ("put down the last one", "D", 4, True),
+        ("put down the last one", "D", 5, False),  # the last of five is E
+        ("bee sounds right to me", "B", 4, True),
+        ("which one would you go for", "C", 4, False),
+        ("whatever you think", "A", 4, False),
+        ("probably the one about plants", "D", 4, False),
+    ],
+)
+def test_model_answers_must_be_named_in_the_sentence(
+    text: str, choice: str, count: int, named: bool
+) -> None:
+    assert names_option(text, choice, count) is named  # type: ignore[arg-type]

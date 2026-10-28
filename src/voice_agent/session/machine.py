@@ -74,6 +74,11 @@ class Resumed(_Event):
     kind: Literal["resumed"] = "resumed"
 
 
+# busy..disabled: the model could not be asked. ungrounded: it proposed an answer the
+# sentence did not name, which is never accepted.
+Fallback = Literal["busy", "rate_limited", "unavailable", "timeout", "disabled", "ungrounded"]
+
+
 class Understood(_Event):
     kind: Literal["understood"] = "understood"
     intent: i.Intent
@@ -81,8 +86,8 @@ class Understood(_Event):
     # For the audit trail and analytics; the machine never reads these.
     text: str | None = None
     latency_ms: Annotated[int, Field(ge=0)] | None = None
-    # Why the model was not used for a sentence the rules did not recognise.
-    fallback: Literal["busy", "rate_limited", "unavailable", "timeout", "disabled"] | None = None
+    # Why the model's understanding was not used for a sentence the rules did not know.
+    fallback: Fallback | None = None
 
 
 class QuestionLoaded(_Event):

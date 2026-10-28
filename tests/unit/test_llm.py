@@ -248,3 +248,23 @@ async def test_warm_up_sends_the_system_prompt(ok: tuple[Server, LlmUnderstander
     server, llm = ok
     await llm.warm()
     assert server.requests[0]["messages"][0]["content"] == SYSTEM_PROMPT
+
+
+async def test_warm_up_may_take_longer_than_a_turn() -> None:
+    # The first call processes the whole system prompt: seconds on a slow machine. Only
+    # its own deadline applies, not the per-turn one or any HTTP-library default.
+    async def slow(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(0.3)
+        return reply('{"action": "help", "args": {}}')
+
+    llm = LlmUnderstander("http://x", transport=httpx.MockTransport(slow), timeout_s=0.1)
+    await llm.warm()
+    with pytest.raises(LlmFallback, match="timeout"):
+        await llm.warm(timeout_s=0.05)
+    await llm.aclose()
+
+
+async def test_the_http_client_adds_no_deadline_of_its_own() -> None:
+    llm = LlmUnderstander("http://x", transport=httpx.MockTransport(lambda _: reply("x")))
+    assert llm._http.timeout.read is None
+    await llm.aclose()

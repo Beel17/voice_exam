@@ -260,6 +260,7 @@ _RULES: Final[list[_Rule]] = [
     *_rules(
         i.Next(),
         r"next|next question|next one|go next|go to the next(?: question| one)?|move on"
+        r"|(?:go to |take me to )?the following(?: question| one)?|following question"
         r"|move to the next(?: question| one)?|continue|skip|skip it|skip this(?: one| question)?"
         r"|go forward|forward",
     ),
@@ -410,7 +411,21 @@ _OUT_OF_SCOPE: Final = re.compile(
     r"|help me (?:answer|solve|with)|what is the answer"
     r"|ignore (?:all |your |the |previous |prior )*(?:instructions|rules)"
     r"|you are now|system prompt|pretend|act as|role ?play|developer mode|jailbreak"
-    r"|new instructions|forget (?:your|the|all))\b"
+    r"|new instructions|forget (?:your|the|all)"
+    # Asking the service to choose, judge or narrow down.
+    r"|(?:would|should|do|will|can) (?:you|i) (?:choose|pick|select|go with|recommend|suggest)"
+    r"|(?:you|i) think is (?:best|right|correct)|recommend|most likely|likely answer"
+    r"|is my (?:answer|choice) (?:correct|right|wrong|good)|got (?:it|this|that|them) right"
+    r"|get (?:it |this |that |any )?right|which of (?:them|these|the options) is"
+    r"|eliminate|rule out|narrow (?:it )?down|fifty fifty|reveal|the answers|score|grade"
+    r"|mark my|for all (?:the )?questions"
+    # Claims of authority, games and hypotheticals.
+    r"|i am (?:the |an |a )?(?:developer|invigilator|examiner|admin|administrator|teacher)"
+    r"|(?:invigilator|examiner|teacher) (?:says|said|told)|debug|you are dan|do anything now"
+    r"|no restrictions|unrestricted|play a game|lets play|hypothetical(?:ly)?|if you knew"
+    r"|grandmother|grandma|repeat after me|translate|has confirmed|already confirmed"
+    # Text shaped like the model's own input or output: only an injection looks like that.
+    r"|utterance|assistant|system|args|json|free text|your instructions|from now on)\b"
 )
 
 _NO_CONTEXT: Final = RulesContext()
@@ -429,6 +444,22 @@ _SECTION_PHRASE: Final = re.compile(
     r"(?: section| part| questions)?"
 )
 _SECTION_STOPWORDS: Final = frozenset({"use", "of", "and", "the", "for", "in", "paper", "part"})
+
+
+def names_option(text: str, choice: OptionLetter, option_count: int | None) -> bool:
+    """Whether the sentence itself names ``choice``: by letter ("probably B"), by position
+    ("the fourth one", "option number four") or as "the last one".
+
+    The language model may recognise an answer, but never choose one: it never sees the
+    question, so a letter it picked would be a guess the candidate might take for a hint.
+    """
+    position = OPTION_LETTERS.index(choice) + 1
+    for word in normalise(text).split():
+        if _LETTER_WORDS.get(word) == choice or _ORDINALS.get(word) == position:
+            return True
+        if word == str(position) or (word in ("last", "final") and position == option_count):
+            return True
+    return False
 
 
 def match(text: str, ctx: RulesContext = _NO_CONTEXT) -> i.Intent | None:

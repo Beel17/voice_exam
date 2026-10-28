@@ -335,7 +335,7 @@ def main() -> None:
         default=10.0,
         help="seconds between a candidate's turns, for sessions per core",
     )
-    parser.add_argument("--llm-binary", default="models/llama-server")
+    parser.add_argument("--llm-binary", default="models/llama.cpp/llama-server")
     parser.add_argument("--llm-model", help="GGUF file; enables the model path")
     parser.add_argument("--llm-threads", type=int, default=2)
     parser.add_argument("--llm-slots", type=int, default=1)

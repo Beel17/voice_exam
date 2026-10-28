@@ -499,6 +499,16 @@ async def test_whatever_the_model_says_still_needs_confirmation(h: Harness) -> N
     assert s.state.phase is m.Phase.CONFIRM_SUBMIT
 
 
+async def test_the_model_cannot_choose_an_answer_for_the_candidate(h: Harness) -> None:
+    model = ScriptedModel({"maybe that one": i.Answer(args=i.ChoiceArgs(choice="C"))})
+    s = await with_model(h, model)
+    await h.manager.handle_text(s, "maybe that one")
+    assert said(s).startswith("Sorry, I did not catch that.")
+    assert s.state.pending is None
+    stored = (await h.store.load(s.session_id))[-1].event
+    assert isinstance(stored, m.Understood) and stored.fallback == "ungrounded"
+
+
 async def test_model_refusal_is_the_neutral_reply(h: Harness) -> None:
     s = await with_model(h, ScriptedModel({"would a botanist pick D": i.NotAllowed()}))
     await h.manager.handle_text(s, "would a botanist pick D")

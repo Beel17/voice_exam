@@ -38,9 +38,18 @@ Every setting can be overridden by environment variables prefixed `VOICE_AGENT_`
 
 ## Language model
 
-Put the llama.cpp `llama-server` binary (CPU build) and a GGUF model in `models/`, or set
-`[llm] server_binary` and `model_file`. The service starts it on 127.0.0.1, warms it, and
-restarts it if it dies; without it, the exam runs on rules only.
+Prepare `models/` once, on any machine with internet (about 1.6 GB), then copy it with
+the package; exam PCs never need internet:
+
+```bash
+uv run python -m tools.fetch_models
+```
+
+It downloads pinned versions of the llama.cpp server and the Qwen2.5 models, checks each
+against its published SHA-256, and writes `models/manifest.json`. At start-up the service
+verifies the files it uses against the manifest, starts the model on 127.0.0.1, warms it,
+and restarts it if it dies. If anything is missing or does not match, it logs why and
+runs the exam on rules only.
 
 ## Benchmark
 
@@ -48,7 +57,7 @@ Run on the target machine and send back the printed table and `bench-report.json
 
 ```bash
 uv run python -m tools.bench
-uv run python -m tools.bench --llm-binary models/llama-server --llm-model models/qwen2.5-1.5b-instruct-q4_k_m.gguf
+uv run python -m tools.bench --llm-model models/qwen2.5-1.5b-instruct-q4_k_m.gguf
 ```
 
 It starts the service as its own process and reports per-turn latency (rules path, and

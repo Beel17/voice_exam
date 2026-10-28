@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from tools.fetch_models import write_manifest
 
 from voice_agent.adapters.fake_adapter import FakeAdapter
 from voice_agent.api.runtime import Runtime
@@ -20,6 +21,7 @@ from voice_agent.main import _every, _keep_model, create_app
 
 FAKE = Path(__file__).parents[1] / "fakes" / "fake_llama_server.py"
 TOKEN = "device-token-for-tests-0001"
+DOWN = {"status": "degraded", "language_model": "down"}
 
 
 def free_port() -> int:
@@ -29,45 +31,61 @@ def free_port() -> int:
         return port
 
 
-def fake_binary(tmp_path: Path) -> Path:
-    """A launcher that accepts llama-server's arguments and starts the stand-in."""
-    if os.name == "nt":
-        path = tmp_path / "llama-server.cmd"
-        path.write_text(f'@"{sys.executable}" "{FAKE}" %*\n', encoding="utf-8")
-    else:
-        path = tmp_path / "llama-server"
-        path.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{FAKE}" "$@"\n', encoding="utf-8")
+def script(folder: Path, name: str, windows: str, posix: str) -> Path:
+    """A small executable script: a .cmd file on Windows, a shell script elsewhere."""
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / (f"{name}.cmd" if os.name == "nt" else name)
+    path.write_text(windows if os.name == "nt" else posix, encoding="utf-8")
+    if os.name != "nt":
         path.chmod(path.stat().st_mode | stat.S_IEXEC)
     return path
 
 
+def fake_binary(folder: Path) -> Path:
+    """A launcher that accepts llama-server's arguments and starts the stand-in."""
+    return script(
+        folder,
+        "llama-server",
+        f'@"{sys.executable}" "{FAKE}" %*\n',
+        f'#!/bin/sh\nexec "{sys.executable}" "{FAKE}" "$@"\n',
+    )
+
+
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
-    model = tmp_path / "model.gguf"
+    """A models folder laid out like a real one, with its manifest."""
+    models = tmp_path / "models"
+    binary = fake_binary(models / "llama.cpp")
+    (models / "llama.cpp" / "ggml.dll").write_bytes(b"a library the server loads")
+    model = models / "model.gguf"
     model.write_bytes(b"not really a model")
+    write_manifest(models)
     return Settings(
         data_dir=tmp_path,
+        models_dir=models,
         device_token_sha256=(hashlib.sha256(TOKEN.encode()).hexdigest(),),
-        llm=LlmSettings(
-            server_binary=fake_binary(tmp_path), model_file=model, port=free_port(), timeout_s=5
-        ),
+        llm=LlmSettings(server_binary=binary, model_file=model, port=free_port(), timeout_s=5),
     )
+
+
+def readiness(settings: Settings) -> dict[str, str]:
+    app = create_app(settings, adapter=FakeAdapter.with_bundled_fixtures())
+    with TestClient(app) as client:
+        result: dict[str, str] = client.get("/readyz").json()
+        return result
 
 
 def test_free_speech_goes_to_the_model(settings: Settings) -> None:
     app = create_app(settings, adapter=FakeAdapter.with_bundled_fixtures())
     with TestClient(app) as client, client.websocket_connect("/v1/session") as ws:
         assert client.get("/readyz").json() == {"status": "ok", "language_model": "running"}
-        ws.send_text(
-            json.dumps(
-                {
-                    "type": "hello",
-                    "schema_version": SCHEMA_VERSION,
-                    "device_id": "pc",
-                    "token": TOKEN,
-                }
-            )
-        )
+        hello = {
+            "type": "hello",
+            "schema_version": SCHEMA_VERSION,
+            "device_id": "pc",
+            "token": TOKEN,
+        }
+        ws.send_text(json.dumps(hello))
         ws.receive_json()
         ws.send_text(
             json.dumps({"type": "login", "reg_no": "10000001AA", "exam_code": "UTME-SAMPLE"})
@@ -98,19 +116,25 @@ def test_free_speech_goes_to_the_model(settings: Settings) -> None:
         assert client.get("/readyz").json()["language_model"] == "running"
 
 
-def test_a_model_that_will_not_start_means_rules_only(settings: Settings, tmp_path: Path) -> None:
-    broken = tmp_path / ("broken.cmd" if os.name == "nt" else "broken")
-    broken.write_text(
-        "@exit /b 3\n" if os.name == "nt" else "#!/bin/sh\nexit 3\n", encoding="utf-8"
-    )
-    if os.name != "nt":
-        broken.chmod(broken.stat().st_mode | stat.S_IEXEC)
+def test_a_model_that_will_not_start_means_rules_only(settings: Settings) -> None:
+    folder = settings.models_dir / "llama.cpp"
+    broken = script(folder, "broken", "@exit /b 3\n", "#!/bin/sh\nexit 3\n")
+    write_manifest(settings.models_dir)  # verified, so it is the start that fails
     llm = settings.llm.model_copy(update={"server_binary": broken})
-    app = create_app(
-        settings.model_copy(update={"llm": llm}), adapter=FakeAdapter.with_bundled_fixtures()
-    )
-    with TestClient(app) as client:
-        assert client.get("/readyz").json() == {"status": "degraded", "language_model": "down"}
+    assert readiness(settings.model_copy(update={"llm": llm})) == DOWN
+
+
+@pytest.mark.parametrize("tamper", ["model", "library", "manifest"])
+def test_files_that_do_not_match_the_manifest_are_not_used(settings: Settings, tamper: str) -> None:
+    models = settings.models_dir
+    match tamper:
+        case "model":
+            (models / "model.gguf").write_bytes(b"a different model")
+        case "library":
+            (models / "llama.cpp" / "ggml.dll").write_bytes(b"swapped")
+        case "manifest":
+            (models / "manifest.json").unlink()
+    assert readiness(settings) == DOWN
 
 
 async def test_background_work_survives_a_failure() -> None:
