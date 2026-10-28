@@ -1,6 +1,6 @@
 """Prepare the models folder once, on any machine with internet; exam PCs never need it.
 
-    uv run python -m tools.fetch_models            # language model files
+    uv run python -m tools.fetch_models            # language and speech models (~2 GB)
     uv run python -m tools.fetch_models --no-small # skip the 0.5B comparison model
 
 Downloads pinned versions, checks each against its published SHA-256 while it streams,
@@ -13,6 +13,8 @@ import argparse
 import hashlib
 import json
 import sys
+import tarfile
+import time
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +23,7 @@ import httpx
 
 MODELS = Path("models")
 CHUNK = 1 << 20
+ATTEMPTS = 3
 
 
 @dataclass(frozen=True)
@@ -59,7 +62,57 @@ QWEN_0_5B = Artifact(
     file="qwen2.5-0.5b-instruct-q4_k_m.gguf",
     optional=True,
 )
-ARTIFACTS = [LLAMA_CPP, QWEN_1_5B, QWEN_0_5B]
+_SHERPA = "https://github.com/k2-fsa/sherpa-onnx/releases/download"
+
+
+def _speech(name: str, archive: str, sha256: str, size: int, folder: str) -> Artifact:
+    tag = "asr-models" if folder == "asr" else "tts-models"
+    return Artifact(
+        name=name,
+        url=f"{_SHERPA}/{tag}/{archive}",
+        sha256=sha256,
+        size=size,
+        file=f"downloads/{archive}",
+        unpack_to=f"speech/{folder}",
+    )
+
+
+# Recognition: streaming English (Kroko community model, CC-BY-SA: attribution needed).
+# Chosen over the 20M zipformer, which lost the start of speech even on its own samples.
+ASR_KROKO = _speech(
+    "Speech recognition: streaming zipformer, English (Kroko, 2025, CC-BY-SA)",
+    "sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06.tar.bz2",
+    "c8676e5ff9ac2a85296e53ee0fd4d5fb1db6770e7a7647166eeafe349ade6834",
+    57_267_600,
+    "asr",
+)
+# Voices for the blind testers to choose between (Piper, medium quality). The int8
+# versions were measured nearly three times slower on CPU, so full precision is used.
+VOICES = [
+    _speech(
+        "Voice: US English, female (lessac)",
+        "vits-piper-en_US-lessac-medium.tar.bz2",
+        "9e3febfacf0abf4270172d2958bcec246032b7e88efc2720840cc80c93de334e",
+        67_230_653,
+        "tts",
+    ),
+    _speech(
+        "Voice: British English, male (alan)",
+        "vits-piper-en_GB-alan-medium.tar.bz2",
+        "a48d4017da0f77668b27bed63fe6e04dd64c6397e1fadad4f460efb0ef7c9012",
+        67_220_121,
+        "tts",
+    ),
+    _speech(
+        "Voice: British English, female (jenny)",
+        "vits-piper-en_GB-jenny_dioco-medium.tar.bz2",
+        "a0888024569bafbefc05a4b48ddf8419d8dbbf3205f4af37cf7c6f1a87cc20c5",
+        67_225_842,
+        "tts",
+    ),
+]
+
+ARTIFACTS = [LLAMA_CPP, QWEN_1_5B, QWEN_0_5B, ASR_KROKO, *VOICES]
 
 
 def sha256_of(path: Path) -> str:
@@ -80,6 +133,20 @@ def fetch(artifact: Artifact, models: Path) -> Path:
         print(f"  already here: {artifact.file}")
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
+    for attempt in range(1, ATTEMPTS + 1):
+        try:
+            return _download(artifact, target)
+        except httpx.HTTPError as e:
+            print(f"\n  attempt {attempt} of {ATTEMPTS} failed: {e}")
+            if attempt < ATTEMPTS:
+                time.sleep(5 * attempt)
+    raise SystemExit(
+        f"Could not download {artifact.name}. Check the internet connection and run this "
+        "again: files already downloaded and verified are kept."
+    )
+
+
+def _download(artifact: Artifact, target: Path) -> Path:
     partial = target.with_name(target.name + ".part")
     digest = hashlib.sha256()
     done = 0
@@ -104,6 +171,12 @@ def fetch(artifact: Artifact, models: Path) -> Path:
 
 def unpack(archive: Path, into: Path) -> None:
     into = into.resolve()
+    if archive.name.endswith(".tar.bz2"):
+        with tarfile.open(archive, "r:bz2") as tf:
+            # The "data" filter refuses absolute paths, "..", links out of the folder
+            # and device files: the archive can only ever write plain files inside it.
+            tf.extractall(into, filter="data")
+        return
     with zipfile.ZipFile(archive) as zf:
         for member in zf.namelist():
             # Never write outside the target folder, whatever the archive says.
@@ -137,7 +210,12 @@ def main() -> None:
         print(f"{artifact.name} ({artifact.size / 2**20:,.0f} MB)")
         path = fetch(artifact, args.models)
         if artifact.unpack_to:
+            # Unpack once: the files may be in use (a running model server holds its DLLs).
+            marker = path.with_name(path.name + ".unpacked")
+            if marker.is_file() and marker.read_text() == artifact.sha256:
+                continue
             unpack(path, args.models / artifact.unpack_to)
+            marker.write_text(artifact.sha256)
     manifest = write_manifest(args.models)
     print(f"wrote {manifest}")
 

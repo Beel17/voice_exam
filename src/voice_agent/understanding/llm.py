@@ -26,6 +26,7 @@ from typing import Any, Final, Literal, Protocol
 
 import httpx
 
+from voice_agent.runtime import children
 from voice_agent.runtime.limits import RateLimiter
 from voice_agent.understanding import intents as i
 
@@ -313,8 +314,13 @@ class LlamaServer:
         self._log_path.parent.mkdir(parents=True, exist_ok=True)
         with self._log_path.open("ab") as log:
             self._process = await asyncio.create_subprocess_exec(
-                *self._command, stdout=log, stderr=log, stdin=asyncio.subprocess.DEVNULL
+                *self._command,
+                stdout=log,
+                stderr=log,
+                stdin=asyncio.subprocess.DEVNULL,
+                preexec_fn=children.before_exec(),
             )
+        children.bind_to_this_process(self._process.pid)
         async with httpx.AsyncClient(base_url=self.base_url, trust_env=False) as http:
             deadline = time.monotonic() + self._ready_timeout
             while time.monotonic() < deadline:

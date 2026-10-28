@@ -17,6 +17,7 @@ import re
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 REPLIES = {
     "hmm i reckon it is probably b": {"action": "answer", "args": {"choice": "B"}},
@@ -34,7 +35,10 @@ def main() -> None:
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--ready-after", type=float, default=0.0)
     parser.add_argument("--exit-at-start", action="store_true")
+    parser.add_argument("--pid-file")
     args, _unknown = parser.parse_known_args()
+    if args.pid_file:
+        Path(args.pid_file).write_text(str(os.getpid()))
     if args.exit_at_start:
         sys.exit(3)
     ready_at = time.monotonic() + args.ready_after

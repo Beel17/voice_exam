@@ -1,5 +1,7 @@
 """The model server as a real child process, using a stand-in that speaks its HTTP API."""
 
+import asyncio
+import os
 import socket
 import sys
 from collections.abc import AsyncIterator
@@ -61,8 +63,6 @@ async def test_a_crashed_server_is_restarted(running: LlamaServer) -> None:
 
 
 async def _exits(s: LlamaServer) -> bool:
-    import asyncio
-
     for _ in range(50):
         if not s.running:
             return True
@@ -94,3 +94,61 @@ async def test_stopping_twice_is_harmless(running: LlamaServer) -> None:
     await running.stop()
     await running.stop()
     assert not running.running
+
+
+def alive(pid: int) -> bool:
+    if sys.platform == "win32":
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32")
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        handle = kernel32.OpenProcess(0x00100000 | 0x1000, False, pid)  # SYNCHRONIZE | QUERY
+        if not handle:
+            return False
+        try:
+            return bool(kernel32.WaitForSingleObject(ctypes.c_void_p(handle), 0) == 0x102)
+        finally:
+            kernel32.CloseHandle(ctypes.c_void_p(handle))
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+PARENT = """
+import asyncio, sys
+from pathlib import Path
+from voice_agent.understanding.llm import LlamaServer
+
+async def main():
+    command = sys.argv[1:]  # python, the stand-in, --port, N, --pid-file, path
+    port = int(command[command.index("--port") + 1])
+    server = LlamaServer(command, port=port, log_path=Path(command[-1] + ".log"))
+    await server.start()
+    print("ready", flush=True)
+    await asyncio.sleep(60)
+
+asyncio.run(main())
+"""
+
+
+async def test_the_model_server_dies_with_a_killed_service(tmp_path: Path) -> None:
+    pid_file = tmp_path / "server.pid"
+    port = free_port()
+    command = [sys.executable, str(FAKE), "--port", str(port), "--pid-file", str(pid_file)]
+    parent = await asyncio.create_subprocess_exec(
+        sys.executable, "-c", PARENT, *command, stdout=asyncio.subprocess.PIPE
+    )
+    assert parent.stdout is not None
+    assert (await asyncio.wait_for(parent.stdout.readline(), 30)).strip() == b"ready"
+    server_pid = int(pid_file.read_text())
+    assert alive(server_pid)
+
+    parent.kill()  # no clean shutdown: as in a crash or Task Manager
+    await parent.wait()
+    for _ in range(100):
+        if not alive(server_pid):
+            break
+        await asyncio.sleep(0.05)
+    assert not alive(server_pid), "the model server outlived the service"
