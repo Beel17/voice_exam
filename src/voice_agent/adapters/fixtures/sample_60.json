@@ -1,0 +1,1431 @@
+{
+  "exam_code": "UTME-SAMPLE",
+  "exam_id": "exam-sample-60",
+  "candidates": [
+    {
+      "reg_no": "10000001AA",
+      "candidate_id": "cand-0001"
+    },
+    {
+      "reg_no": "10000002AA",
+      "candidate_id": "cand-0002"
+    },
+    {
+      "reg_no": "10000003AA",
+      "candidate_id": "cand-0003"
+    }
+  ],
+  "outline": {
+    "exam_id": "exam-sample-60",
+    "question_count": 60,
+    "sections": [
+      {
+        "number": 1,
+        "title": "Use of English",
+        "first_question": 1,
+        "last_question": 15
+      },
+      {
+        "number": 2,
+        "title": "Mathematics",
+        "first_question": 16,
+        "last_question": 30
+      },
+      {
+        "number": 3,
+        "title": "Physics",
+        "first_question": 31,
+        "last_question": 45
+      },
+      {
+        "number": 4,
+        "title": "Biology",
+        "first_question": 46,
+        "last_question": 60
+      }
+    ],
+    "duration_s": 3600
+  },
+  "questions": [
+    {
+      "number": 1,
+      "text": "Choose the word nearest in meaning to 'candid' in this sentence: The manager was candid about the company's problems.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "angry"
+        },
+        {
+          "letter": "B",
+          "text": "frank"
+        },
+        {
+          "letter": "C",
+          "text": "secretive"
+        },
+        {
+          "letter": "D",
+          "text": "careless"
+        }
+      ]
+    },
+    {
+      "number": 2,
+      "text": "Choose the word opposite in meaning to 'scarce'.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "rare"
+        },
+        {
+          "letter": "B",
+          "text": "expensive"
+        },
+        {
+          "letter": "C",
+          "text": "plentiful"
+        },
+        {
+          "letter": "D",
+          "text": "hidden"
+        }
+      ]
+    },
+    {
+      "number": 3,
+      "text": "Choose the option that best completes the sentence: Neither the teacher nor the students ___ present.",
+      "spoken_text": "Choose the option that best completes the sentence: Neither the teacher nor the students, blank, present.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "was"
+        },
+        {
+          "letter": "B",
+          "text": "were"
+        },
+        {
+          "letter": "C",
+          "text": "is"
+        },
+        {
+          "letter": "D",
+          "text": "be"
+        }
+      ]
+    },
+    {
+      "number": 4,
+      "text": "Choose the correctly spelt word.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "acommodation",
+          "spoken_text": "a, c, o, m, m, o, d, a, t, i, o, n"
+        },
+        {
+          "letter": "B",
+          "text": "accomodation",
+          "spoken_text": "a, c, c, o, m, o, d, a, t, i, o, n"
+        },
+        {
+          "letter": "C",
+          "text": "accommodation",
+          "spoken_text": "a, c, c, o, m, m, o, d, a, t, i, o, n"
+        },
+        {
+          "letter": "D",
+          "text": "acomodation",
+          "spoken_text": "a, c, o, m, o, d, a, t, i, o, n"
+        }
+      ]
+    },
+    {
+      "number": 5,
+      "text": "Choose the option that best completes the sentence: She has been living in Lagos ___ 2019.",
+      "spoken_text": "Choose the option that best completes the sentence: She has been living in Lagos, blank, 2019.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "for"
+        },
+        {
+          "letter": "B",
+          "text": "since"
+        },
+        {
+          "letter": "C",
+          "text": "from"
+        },
+        {
+          "letter": "D",
+          "text": "at"
+        },
+        {
+          "letter": "E",
+          "text": "by"
+        }
+      ]
+    },
+    {
+      "number": 6,
+      "text": "What does the expression 'the plan fell through' mean?",
+      "options": [
+        {
+          "letter": "A",
+          "text": "The plan succeeded"
+        },
+        {
+          "letter": "B",
+          "text": "The plan was postponed"
+        },
+        {
+          "letter": "C",
+          "text": "The plan was approved"
+        },
+        {
+          "letter": "D",
+          "text": "The plan failed"
+        }
+      ]
+    },
+    {
+      "number": 7,
+      "text": "Identify the figure of speech in: The wind whispered through the trees.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "Simile"
+        },
+        {
+          "letter": "B",
+          "text": "Personification"
+        },
+        {
+          "letter": "C",
+          "text": "Hyperbole"
+        },
+        {
+          "letter": "D",
+          "text": "Metaphor"
+        }
+      ]
+    },
+    {
+      "number": 8,
+      "text": "What is the plural of 'criterion'?",
+      "options": [
+        {
+          "letter": "A",
+          "text": "criterions"
+        },
+        {
+          "letter": "B",
+          "text": "criterias"
+        },
+        {
+          "letter": "C",
+          "text": "criteria"
+        },
+        {
+          "letter": "D",
+          "text": "criterium"
+        }
+      ]
+    },
+    {
+      "number": 9,
+      "text": "Choose the option that best completes the sentence: He is the ___ of the two brothers.",
+      "spoken_text": "Choose the option that best completes the sentence: He is the, blank, of the two brothers.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "taller"
+        },
+        {
+          "letter": "B",
+          "text": "tallest"
+        },
+        {
+          "letter": "C",
+          "text": "most tall"
+        },
+        {
+          "letter": "D",
+          "text": "more taller"
+        }
+      ]
+    },
+    {
+      "number": 10,
+      "text": "Choose the word opposite in meaning to 'reluctant'.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "unwilling"
+        },
+        {
+          "letter": "B",
+          "text": "eager"
+        },
+        {
+          "letter": "C",
+          "text": "slow"
+        },
+        {
+          "letter": "D",
+          "text": "careful"
+        }
+      ]
+    },
+    {
+      "number": 11,
+      "text": "Choose the option that best completes the sentence: By the time we arrived, the film ___.",
+      "spoken_text": "Choose the option that best completes the sentence: By the time we arrived, the film, blank.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "has started"
+        },
+        {
+          "letter": "B",
+          "text": "starts"
+        },
+        {
+          "letter": "C",
+          "text": "had started"
+        },
+        {
+          "letter": "D",
+          "text": "was start"
+        }
+      ]
+    },
+    {
+      "number": 12,
+      "text": "What does the idiom 'to bury the hatchet' mean?",
+      "options": [
+        {
+          "letter": "A",
+          "text": "To hide a weapon"
+        },
+        {
+          "letter": "B",
+          "text": "To start a quarrel"
+        },
+        {
+          "letter": "C",
+          "text": "To dig a hole"
+        },
+        {
+          "letter": "D",
+          "text": "To make peace"
+        }
+      ]
+    },
+    {
+      "number": 13,
+      "text": "Choose the correct question tag: You will come tomorrow, ___?",
+      "spoken_text": "Choose the correct question tag: You will come tomorrow, blank?",
+      "options": [
+        {
+          "letter": "A",
+          "text": "won't you"
+        },
+        {
+          "letter": "B",
+          "text": "will you"
+        },
+        {
+          "letter": "C",
+          "text": "don't you"
+        },
+        {
+          "letter": "D",
+          "text": "shall you"
+        }
+      ]
+    },
+    {
+      "number": 14,
+      "text": "Choose the word nearest in meaning to 'meticulous'.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "lazy"
+        },
+        {
+          "letter": "B",
+          "text": "careful"
+        },
+        {
+          "letter": "C",
+          "text": "quick"
+        },
+        {
+          "letter": "D",
+          "text": "noisy"
+        }
+      ]
+    },
+    {
+      "number": 15,
+      "text": "Choose the option that best completes the sentence: One of the boys ___ lost his book.",
+      "spoken_text": "Choose the option that best completes the sentence: One of the boys, blank, lost his book.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "have"
+        },
+        {
+          "letter": "B",
+          "text": "are"
+        },
+        {
+          "letter": "C",
+          "text": "has"
+        },
+        {
+          "letter": "D",
+          "text": "were"
+        }
+      ]
+    },
+    {
+      "number": 16,
+      "text": "Simplify 2³ × 2².",
+      "spoken_text": "Simplify 2 cubed times 2 squared.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "2⁶",
+          "spoken_text": "2 to the power 6"
+        },
+        {
+          "letter": "B",
+          "text": "4⁵",
+          "spoken_text": "4 to the power 5"
+        },
+        {
+          "letter": "C",
+          "text": "2⁵",
+          "spoken_text": "2 to the power 5"
+        },
+        {
+          "letter": "D",
+          "text": "4⁶",
+          "spoken_text": "4 to the power 6"
+        }
+      ]
+    },
+    {
+      "number": 17,
+      "text": "Find the value of x if 3x + 5 = 20.",
+      "spoken_text": "Find the value of x if 3 x plus 5 equals 20.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "15"
+        },
+        {
+          "letter": "B",
+          "text": "25/3",
+          "spoken_text": "25 over 3"
+        },
+        {
+          "letter": "C",
+          "text": "3"
+        },
+        {
+          "letter": "D",
+          "text": "5"
+        }
+      ]
+    },
+    {
+      "number": 18,
+      "text": "What is 15% of 240?",
+      "spoken_text": "What is 15 percent of 240?",
+      "options": [
+        {
+          "letter": "A",
+          "text": "24"
+        },
+        {
+          "letter": "B",
+          "text": "36"
+        },
+        {
+          "letter": "C",
+          "text": "32"
+        },
+        {
+          "letter": "D",
+          "text": "40"
+        }
+      ]
+    },
+    {
+      "number": 19,
+      "text": "Convert 101₂ to base ten.",
+      "spoken_text": "Convert 1 0 1 in base two to base ten.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "3"
+        },
+        {
+          "letter": "B",
+          "text": "7"
+        },
+        {
+          "letter": "C",
+          "text": "101"
+        },
+        {
+          "letter": "D",
+          "text": "5"
+        }
+      ]
+    },
+    {
+      "number": 20,
+      "text": "The sum of the interior angles of a triangle is",
+      "options": [
+        {
+          "letter": "A",
+          "text": "90°",
+          "spoken_text": "90 degrees"
+        },
+        {
+          "letter": "B",
+          "text": "180°",
+          "spoken_text": "180 degrees"
+        },
+        {
+          "letter": "C",
+          "text": "360°",
+          "spoken_text": "360 degrees"
+        },
+        {
+          "letter": "D",
+          "text": "270°",
+          "spoken_text": "270 degrees"
+        }
+      ]
+    },
+    {
+      "number": 21,
+      "text": "Find the mean of 2, 4, 6, 8 and 10.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "5"
+        },
+        {
+          "letter": "B",
+          "text": "8"
+        },
+        {
+          "letter": "C",
+          "text": "30"
+        },
+        {
+          "letter": "D",
+          "text": "6"
+        }
+      ]
+    },
+    {
+      "number": 22,
+      "text": "Solve x² − 9 = 0.",
+      "spoken_text": "Solve x squared minus 9 equals 0.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "x = 9",
+          "spoken_text": "x equals 9"
+        },
+        {
+          "letter": "B",
+          "text": "x = ±3",
+          "spoken_text": "x equals plus or minus 3"
+        },
+        {
+          "letter": "C",
+          "text": "x = ±9",
+          "spoken_text": "x equals plus or minus 9"
+        },
+        {
+          "letter": "D",
+          "text": "x = 3 only",
+          "spoken_text": "x equals 3 only"
+        }
+      ]
+    },
+    {
+      "number": 23,
+      "text": "If a = 2 and b = 3, find a²b.",
+      "spoken_text": "If a equals 2 and b equals 3, find a squared times b.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "18"
+        },
+        {
+          "letter": "B",
+          "text": "36"
+        },
+        {
+          "letter": "C",
+          "text": "12"
+        },
+        {
+          "letter": "D",
+          "text": "6"
+        }
+      ]
+    },
+    {
+      "number": 24,
+      "text": "A rectangle is 8 cm long and 5 cm wide. Find its area.",
+      "spoken_text": "A rectangle is 8 centimetres long and 5 centimetres wide. Find its area.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "26 cm²",
+          "spoken_text": "26 square centimetres"
+        },
+        {
+          "letter": "B",
+          "text": "40 cm²",
+          "spoken_text": "40 square centimetres"
+        },
+        {
+          "letter": "C",
+          "text": "13 cm²",
+          "spoken_text": "13 square centimetres"
+        },
+        {
+          "letter": "D",
+          "text": "80 cm²",
+          "spoken_text": "80 square centimetres"
+        }
+      ]
+    },
+    {
+      "number": 25,
+      "text": "Express 0.75 as a fraction in its lowest terms.",
+      "spoken_text": "Express 0 point 7 5 as a fraction in its lowest terms.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "75/100",
+          "spoken_text": "75 over 100"
+        },
+        {
+          "letter": "B",
+          "text": "7/5",
+          "spoken_text": "7 over 5"
+        },
+        {
+          "letter": "C",
+          "text": "1/4",
+          "spoken_text": "1 over 4"
+        },
+        {
+          "letter": "D",
+          "text": "3/4",
+          "spoken_text": "3 over 4"
+        }
+      ]
+    },
+    {
+      "number": 26,
+      "text": "What is the next number in the sequence 3, 6, 12, 24, …?",
+      "spoken_text": "What is the next number in the sequence 3, 6, 12, 24?",
+      "options": [
+        {
+          "letter": "A",
+          "text": "36"
+        },
+        {
+          "letter": "B",
+          "text": "48"
+        },
+        {
+          "letter": "C",
+          "text": "30"
+        },
+        {
+          "letter": "D",
+          "text": "72"
+        }
+      ]
+    },
+    {
+      "number": 27,
+      "text": "Evaluate log₁₀ 1000.",
+      "spoken_text": "Evaluate log to base 10 of 1000.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "10"
+        },
+        {
+          "letter": "B",
+          "text": "100"
+        },
+        {
+          "letter": "C",
+          "text": "3"
+        },
+        {
+          "letter": "D",
+          "text": "4"
+        }
+      ]
+    },
+    {
+      "number": 28,
+      "text": "How many sides has a hexagon?",
+      "options": [
+        {
+          "letter": "A",
+          "text": "5"
+        },
+        {
+          "letter": "B",
+          "text": "8"
+        },
+        {
+          "letter": "C",
+          "text": "7"
+        },
+        {
+          "letter": "D",
+          "text": "6"
+        }
+      ]
+    },
+    {
+      "number": 29,
+      "text": "Find the simple interest on ₦5,000 at 10% per annum for 2 years.",
+      "spoken_text": "Find the simple interest on 5,000 naira at 10 percent per annum for 2 years.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "₦500",
+          "spoken_text": "500 naira"
+        },
+        {
+          "letter": "B",
+          "text": "₦1,000",
+          "spoken_text": "1,000 naira"
+        },
+        {
+          "letter": "C",
+          "text": "₦1,500",
+          "spoken_text": "1,500 naira"
+        },
+        {
+          "letter": "D",
+          "text": "₦2,000",
+          "spoken_text": "2,000 naira"
+        }
+      ]
+    },
+    {
+      "number": 30,
+      "text": "A fair die is thrown once. What is the probability of getting a 6?",
+      "options": [
+        {
+          "letter": "A",
+          "text": "1/2",
+          "spoken_text": "1 over 2"
+        },
+        {
+          "letter": "B",
+          "text": "1/3",
+          "spoken_text": "1 over 3"
+        },
+        {
+          "letter": "C",
+          "text": "1/6",
+          "spoken_text": "1 over 6"
+        },
+        {
+          "letter": "D",
+          "text": "5/6",
+          "spoken_text": "5 over 6"
+        }
+      ]
+    },
+    {
+      "number": 31,
+      "text": "What is the SI unit of force?",
+      "options": [
+        {
+          "letter": "A",
+          "text": "Joule"
+        },
+        {
+          "letter": "B",
+          "text": "Newton"
+        },
+        {
+          "letter": "C",
+          "text": "Watt"
+        },
+        {
+          "letter": "D",
+          "text": "Pascal"
+        }
+      ]
+    },
+    {
+      "number": 32,
+      "text": "Which of these is a vector quantity?",
+      "options": [
+        {
+          "letter": "A",
+          "text": "Speed"
+        },
+        {
+          "letter": "B",
+          "text": "Mass"
+        },
+        {
+          "letter": "C",
+          "text": "Temperature"
+        },
+        {
+          "letter": "D",
+          "text": "Velocity"
+        }
+      ]
+    },
+    {
+      "number": 33,
+      "text": "A car travels 100 m in 20 s. Find its average speed.",
+      "spoken_text": "A car travels 100 metres in 20 seconds. Find its average speed.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "2000 m/s",
+          "spoken_text": "2000 metres per second"
+        },
+        {
+          "letter": "B",
+          "text": "5 m/s",
+          "spoken_text": "5 metres per second"
+        },
+        {
+          "letter": "C",
+          "text": "0.2 m/s",
+          "spoken_text": "0 point 2 metres per second"
+        },
+        {
+          "letter": "D",
+          "text": "120 m/s",
+          "spoken_text": "120 metres per second"
+        }
+      ]
+    },
+    {
+      "number": 34,
+      "text": "The process by which heat travels through a vacuum is",
+      "options": [
+        {
+          "letter": "A",
+          "text": "conduction"
+        },
+        {
+          "letter": "B",
+          "text": "convection"
+        },
+        {
+          "letter": "C",
+          "text": "radiation"
+        },
+        {
+          "letter": "D",
+          "text": "evaporation"
+        }
+      ]
+    },
+    {
+      "number": 35,
+      "text": "Which colour of visible light has the longest wavelength?",
+      "options": [
+        {
+          "letter": "A",
+          "text": "Violet"
+        },
+        {
+          "letter": "B",
+          "text": "Green"
+        },
+        {
+          "letter": "C",
+          "text": "Blue"
+        },
+        {
+          "letter": "D",
+          "text": "Red"
+        }
+      ]
+    },
+    {
+      "number": 36,
+      "text": "The unit of electrical resistance is the",
+      "options": [
+        {
+          "letter": "A",
+          "text": "ohm"
+        },
+        {
+          "letter": "B",
+          "text": "ampere"
+        },
+        {
+          "letter": "C",
+          "text": "volt"
+        },
+        {
+          "letter": "D",
+          "text": "coulomb"
+        }
+      ]
+    },
+    {
+      "number": 37,
+      "text": "What is the approximate acceleration due to gravity near the Earth's surface?",
+      "options": [
+        {
+          "letter": "A",
+          "text": "1 m/s²",
+          "spoken_text": "1 metre per second squared"
+        },
+        {
+          "letter": "B",
+          "text": "10 m/s²",
+          "spoken_text": "10 metres per second squared"
+        },
+        {
+          "letter": "C",
+          "text": "100 m/s²",
+          "spoken_text": "100 metres per second squared"
+        },
+        {
+          "letter": "D",
+          "text": "0.1 m/s²",
+          "spoken_text": "0 point 1 metres per second squared"
+        }
+      ]
+    },
+    {
+      "number": 38,
+      "text": "An object at rest stays at rest unless a force acts on it. This is Newton's",
+      "options": [
+        {
+          "letter": "A",
+          "text": "second law"
+        },
+        {
+          "letter": "B",
+          "text": "third law"
+        },
+        {
+          "letter": "C",
+          "text": "first law"
+        },
+        {
+          "letter": "D",
+          "text": "law of gravitation"
+        }
+      ]
+    },
+    {
+      "number": 39,
+      "text": "Sound cannot travel through",
+      "options": [
+        {
+          "letter": "A",
+          "text": "water"
+        },
+        {
+          "letter": "B",
+          "text": "steel"
+        },
+        {
+          "letter": "C",
+          "text": "air"
+        },
+        {
+          "letter": "D",
+          "text": "a vacuum"
+        }
+      ]
+    },
+    {
+      "number": 40,
+      "text": "True or false: the boiling point of water decreases at higher altitudes.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "True"
+        },
+        {
+          "letter": "B",
+          "text": "False"
+        }
+      ]
+    },
+    {
+      "number": 41,
+      "text": "A device that converts mechanical energy to electrical energy is a",
+      "options": [
+        {
+          "letter": "A",
+          "text": "motor"
+        },
+        {
+          "letter": "B",
+          "text": "generator"
+        },
+        {
+          "letter": "C",
+          "text": "transformer"
+        },
+        {
+          "letter": "D",
+          "text": "battery"
+        }
+      ]
+    },
+    {
+      "number": 42,
+      "text": "Calculate the work done when a force of 10 N moves a body 5 m in its direction.",
+      "spoken_text": "Calculate the work done when a force of 10 newtons moves a body 5 metres in its direction.",
+      "options": [
+        {
+          "letter": "A",
+          "text": "2 J",
+          "spoken_text": "2 joules"
+        },
+        {
+          "letter": "B",
+          "text": "15 J",
+          "spoken_text": "15 joules"
+        },
+        {
+          "letter": "C",
+          "text": "50 J",
+          "spoken_text": "50 joules"
+        },
+        {
+          "letter": "D",
+          "text": "0.5 J",
+          "spoken_text": "0 point 5 joules"
+        }
+      ]
+    },
+    {
+      "number": 43,
+      "text": "The image formed by a plane mirror is",
+      "options": [
+        {
+          "letter": "A",
+          "text": "real and inverted"
+        },
+        {
+          "letter": "B",
+          "text": "real and upright"
+        },
+        {
+          "letter": "C",
+          "text": "virtual and inverted"
+        },
+        {
+          "letter": "D",
+          "text": "virtual and upright"
+        }
+      ]
+    },
+    {
+      "number": 44,
+      "text": "Which of these is a good conductor of electricity?",
+      "options": [
+        {
+          "letter": "A",
+          "text": "Rubber"
+        },
+        {
+          "letter": "B",
+          "text": "Copper"
+        },
+        {
+          "letter": "C",
+          "text": "Glass"
+        },
+        {
+          "letter": "D",
+          "text": "Wood"
+        }
+      ]
+    },
+    {
+      "number": 45,
+      "text": "The charge on an electron is",
+      "options": [
+        {
+          "letter": "A",
+          "text": "positive"
+        },
+        {
+          "letter": "B",
+          "text": "neutral"
+        },
+        {
+          "letter": "C",
+          "text": "negative"
+        }
+      ]
+    },
+    {
+      "number": 46,
+      "text": "The basic unit of life is the",
+      "options": [
+        {
+          "letter": "A",
+          "text": "tissue"
+        },
+        {
+          "letter": "B",
+          "text": "organ"
+        },
+        {
+          "letter": "C",
+          "text": "atom"
+        },
+        {
+          "letter": "D",
+          "text": "cell"
+        }
+      ]
+    },
+    {
+      "number": 47,
+      "text": "Which organelle is the site of respiration?",
+      "options": [
+        {
+          "letter": "A",
+          "text": "Mitochondrion"
+        },
+        {
+          "letter": "B",
+          "text": "Nucleus"
+        },
+        {
+          "letter": "C",
+          "text": "Ribosome"
+        },
+        {
+          "letter": "D",
+          "text": "Vacuole"
+        }
+      ]
+    },
+    {
+      "number": 48,
+      "text": "The movement of water across a semi-permeable membrane from a dilute to a concentrated solution is called",
+      "options": [
+        {
+          "letter": "A",
+          "text": "diffusion"
+        },
+        {
+          "letter": "B",
+          "text": "transpiration"
+        },
+        {
+          "letter": "C",
+          "text": "osmosis"
+        },
+        {
+          "letter": "D",
+          "text": "active transport"
+        }
+      ]
+    },
+    {
+      "number": 49,
+      "text": "Which blood vessels carry blood away from the heart?",
+      "options": [
+        {
+          "letter": "A",
+          "text": "Veins"
+        },
+        {
+          "letter": "B",
+          "text": "Arteries"
+        },
+        {
+          "letter": "C",
+          "text": "Capillaries"
+        },
+        {
+          "letter": "D",
+          "text": "Venules"
+        }
+      ]
+    },
+    {
+      "number": 50,
+      "text": "Green plants make their food by",
+      "options": [
+        {
+          "letter": "A",
+          "text": "respiration"
+        },
+        {
+          "letter": "B",
+          "text": "digestion"
+        },
+        {
+          "letter": "C",
+          "text": "excretion"
+        },
+        {
+          "letter": "D",
+          "text": "photosynthesis"
+        }
+      ]
+    },
+    {
+      "number": 51,
+      "text": "Malaria is caused by",
+      "options": [
+        {
+          "letter": "A",
+          "text": "a virus"
+        },
+        {
+          "letter": "B",
+          "text": "Plasmodium"
+        },
+        {
+          "letter": "C",
+          "text": "the Anopheles mosquito"
+        },
+        {
+          "letter": "D",
+          "text": "bacteria"
+        }
+      ]
+    },
+    {
+      "number": 52,
+      "text": "Which of these is NOT a mammal?",
+      "options": [
+        {
+          "letter": "A",
+          "text": "Whale"
+        },
+        {
+          "letter": "B",
+          "text": "Bat"
+        },
+        {
+          "letter": "C",
+          "text": "Shark"
+        },
+        {
+          "letter": "D",
+          "text": "Goat"
+        }
+      ]
+    },
+    {
+      "number": 53,
+      "text": "The male reproductive part of a flower is the",
+      "options": [
+        {
+          "letter": "A",
+          "text": "pistil"
+        },
+        {
+          "letter": "B",
+          "text": "sepal"
+        },
+        {
+          "letter": "C",
+          "text": "petal"
+        },
+        {
+          "letter": "D",
+          "text": "stamen"
+        }
+      ]
+    },
+    {
+      "number": 54,
+      "text": "Which vitamin deficiency causes scurvy?",
+      "options": [
+        {
+          "letter": "A",
+          "text": "Vitamin C"
+        },
+        {
+          "letter": "B",
+          "text": "Vitamin A"
+        },
+        {
+          "letter": "C",
+          "text": "Vitamin D"
+        },
+        {
+          "letter": "D",
+          "text": "Vitamin K"
+        }
+      ]
+    },
+    {
+      "number": 55,
+      "text": "The part of the brain that controls balance is the",
+      "options": [
+        {
+          "letter": "A",
+          "text": "cerebrum"
+        },
+        {
+          "letter": "B",
+          "text": "cerebellum"
+        },
+        {
+          "letter": "C",
+          "text": "medulla oblongata"
+        },
+        {
+          "letter": "D",
+          "text": "hypothalamus"
+        }
+      ]
+    },
+    {
+      "number": 56,
+      "text": "An organism that feeds on dead organic matter is a",
+      "options": [
+        {
+          "letter": "A",
+          "text": "parasite"
+        },
+        {
+          "letter": "B",
+          "text": "predator"
+        },
+        {
+          "letter": "C",
+          "text": "saprophyte"
+        },
+        {
+          "letter": "D",
+          "text": "producer"
+        }
+      ]
+    },
+    {
+      "number": 57,
+      "text": "How many chambers does the human heart have?",
+      "options": [
+        {
+          "letter": "A",
+          "text": "Two"
+        },
+        {
+          "letter": "B",
+          "text": "Three"
+        },
+        {
+          "letter": "C",
+          "text": "Five"
+        },
+        {
+          "letter": "D",
+          "text": "Four"
+        }
+      ]
+    },
+    {
+      "number": 58,
+      "text": "Which of these is a sex-linked trait in humans?",
+      "options": [
+        {
+          "letter": "A",
+          "text": "Blood group"
+        },
+        {
+          "letter": "B",
+          "text": "Colour blindness"
+        },
+        {
+          "letter": "C",
+          "text": "Height"
+        },
+        {
+          "letter": "D",
+          "text": "Eye shape"
+        },
+        {
+          "letter": "E",
+          "text": "Tongue rolling"
+        }
+      ]
+    },
+    {
+      "number": 59,
+      "text": "The gas released during photosynthesis is",
+      "options": [
+        {
+          "letter": "A",
+          "text": "carbon dioxide"
+        },
+        {
+          "letter": "B",
+          "text": "nitrogen"
+        },
+        {
+          "letter": "C",
+          "text": "oxygen"
+        },
+        {
+          "letter": "D",
+          "text": "hydrogen"
+        }
+      ]
+    },
+    {
+      "number": 60,
+      "text": "The study of the relationship between organisms and their environment is called",
+      "options": [
+        {
+          "letter": "A",
+          "text": "ecology"
+        },
+        {
+          "letter": "B",
+          "text": "genetics"
+        },
+        {
+          "letter": "C",
+          "text": "anatomy"
+        },
+        {
+          "letter": "D",
+          "text": "taxonomy"
+        }
+      ]
+    }
+  ]
+}

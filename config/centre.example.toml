@@ -1,0 +1,28 @@
+# Copy to config/centre.toml at set-up. Every value can be overridden by an environment
+# variable, e.g. VOICE_AGENT_MODE=server or VOICE_AGENT_LIMITS__MAX_UTTERANCE_CHARS=200.
+
+# "pc": this machine serves its own candidate only (binds to 127.0.0.1).
+# "server": this machine serves every voice candidate in the centre (binds to the LAN).
+mode = "pc"
+
+# host = "127.0.0.1"   # leave unset to use the mode's default
+port = 8765
+
+data_dir = "data"
+models_dir = "models"
+
+# SHA-256 hex digests of the device tokens issued at set-up. Never put tokens here.
+device_token_sha256 = []
+
+[limits]
+max_utterance_chars = 300
+
+[llm]
+# Set enabled = false to run on rules only (no language model at all).
+enabled = true
+server_binary = "models/llama-server"
+model_file = "models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
+threads = 2
+slots = 1
+timeout_s = 2.0
+max_calls_per_minute = 20

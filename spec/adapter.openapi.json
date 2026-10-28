@@ -1,0 +1,665 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Voice Exam Agent: Exam Data Adapter",
+    "version": "0.1.0",
+    "description": "The operations the Voice Exam Agent needs from an exam platform, and nothing more.\n\nRules every implementation must follow (checked by spec/conformance):\n\n1. **No answer key, ever.** No response may contain the correct option or anything\n   derived from it. Responses are closed objects: unknown fields are rejected by the\n   service, which then treats the platform as misconfigured.\n2. **Writes are idempotent by `operation_id`.** Repeating an operation that was already\n   applied returns success and changes nothing, even if newer operations were applied in\n   between. Reusing an `operation_id` with a different payload is `operation_conflict`.\n3. **Candidates are isolated.** A `candidate_id` only ever reads and writes its own\n   answers.\n4. **Time comes from the platform.** `time-left` follows the platform's own timing rules\n   (extra time, pauses); the service never uses a client clock.\n5. **Errors** use the ErrorBody shape. The service retries on timeouts and 5xx responses\n   (same `operation_id`) and never retries a 4xx.\n\nServed on the centre network or loopback only; requests carry the bearer token issued\nwhen the centre is set up.\n"
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8080"
+    }
+  ],
+  "security": [
+    {
+      "centreToken": []
+    }
+  ],
+  "paths": {
+    "/v1/candidates/verify": {
+      "post": {
+        "summary": "Check registration and start (or resume) the candidate's exam",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateSession"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Refused: not_registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/exams/{exam_id}/outline": {
+      "get": {
+        "summary": "Number of questions, sections, duration",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExamOutline"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Refused: no_such_exam",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "exam_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/exams/{exam_id}/questions/{n}": {
+      "get": {
+        "summary": "Question text and options; never the answer key",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Question"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Refused: no_such_exam, no_such_question",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "exam_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "n",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/v1/candidates/{candidate_id}/answers": {
+      "get": {
+        "summary": "The candidate's own saved answers",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedAnswers"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Refused: unknown_candidate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/candidates/{candidate_id}/answers/{n}": {
+      "put": {
+        "summary": "Save a confirmed answer (choice null clears it); idempotent",
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "404": {
+            "description": "Refused: unknown_candidate, no_such_question",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Refused: already_submitted, time_up, operation_conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Refused: invalid_choice",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "n",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveAnswerRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/candidates/{candidate_id}/time-left": {
+      "get": {
+        "summary": "Seconds left under the platform's timing rules",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimeLeftResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Refused: unknown_candidate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/candidates/{candidate_id}/submit": {
+      "post": {
+        "summary": "Final submission; idempotent",
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "404": {
+            "description": "Refused: unknown_candidate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Refused: already_submitted, operation_conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitRequest"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "centreToken": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "schemas": {
+      "CandidateSession": {
+        "additionalProperties": false,
+        "description": "Returned by ``verify_candidate``. These IDs are the only ones the service ever uses\nfor a candidate; nothing the candidate says can change them.",
+        "properties": {
+          "candidate_id": {
+            "pattern": "^[A-Za-z0-9._:/-]{1,64}$",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "exam_id": {
+            "pattern": "^[A-Za-z0-9._:/-]{1,64}$",
+            "title": "Exam Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "exam_id"
+        ],
+        "title": "CandidateSession",
+        "type": "object"
+      },
+      "ErrorBody": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/RejectReason"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ErrorBody",
+        "type": "object"
+      },
+      "ExamOutline": {
+        "additionalProperties": false,
+        "properties": {
+          "exam_id": {
+            "pattern": "^[A-Za-z0-9._:/-]{1,64}$",
+            "title": "Exam Id",
+            "type": "string"
+          },
+          "question_count": {
+            "maximum": 999,
+            "minimum": 1,
+            "title": "Question Count",
+            "type": "integer"
+          },
+          "sections": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Section"
+            },
+            "title": "Sections",
+            "type": "array"
+          },
+          "duration_s": {
+            "minimum": 1,
+            "title": "Duration S",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "exam_id",
+          "question_count",
+          "duration_s"
+        ],
+        "title": "ExamOutline",
+        "type": "object"
+      },
+      "Option": {
+        "additionalProperties": false,
+        "properties": {
+          "letter": {
+            "enum": [
+              "A",
+              "B",
+              "C",
+              "D",
+              "E"
+            ],
+            "title": "Letter",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "spoken_text": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Spoken Text"
+          }
+        },
+        "required": [
+          "letter",
+          "text"
+        ],
+        "title": "Option",
+        "type": "object"
+      },
+      "Question": {
+        "additionalProperties": false,
+        "description": "One question as the candidate may hear it. There is deliberately no field for the\ncorrect answer, and the closed model means a platform cannot add one.",
+        "properties": {
+          "number": {
+            "minimum": 1,
+            "title": "Number",
+            "type": "integer"
+          },
+          "text": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "spoken_text": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Spoken Text"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/Option"
+            },
+            "maxItems": 5,
+            "minItems": 2,
+            "title": "Options",
+            "type": "array"
+          }
+        },
+        "required": [
+          "number",
+          "text",
+          "options"
+        ],
+        "title": "Question",
+        "type": "object"
+      },
+      "RejectReason": {
+        "enum": [
+          "not_registered",
+          "unknown_candidate",
+          "no_such_exam",
+          "no_such_question",
+          "invalid_choice",
+          "already_submitted",
+          "time_up",
+          "operation_conflict"
+        ],
+        "title": "RejectReason",
+        "type": "string"
+      },
+      "SaveAnswerRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "choice": {
+            "anyOf": [
+              {
+                "enum": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choice"
+          },
+          "operation_id": {
+            "pattern": "^[A-Za-z0-9._:/-]{1,64}$",
+            "title": "Operation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "choice",
+          "operation_id"
+        ],
+        "title": "SaveAnswerRequest",
+        "type": "object"
+      },
+      "SavedAnswers": {
+        "additionalProperties": false,
+        "description": "The candidate's own saved answers; unanswered questions are absent.",
+        "properties": {
+          "answers": {
+            "additionalProperties": {
+              "enum": [
+                "A",
+                "B",
+                "C",
+                "D",
+                "E"
+              ],
+              "type": "string"
+            },
+            "title": "Answers",
+            "type": "object"
+          }
+        },
+        "required": [
+          "answers"
+        ],
+        "title": "SavedAnswers",
+        "type": "object"
+      },
+      "Section": {
+        "additionalProperties": false,
+        "properties": {
+          "number": {
+            "minimum": 1,
+            "title": "Number",
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "first_question": {
+            "minimum": 1,
+            "title": "First Question",
+            "type": "integer"
+          },
+          "last_question": {
+            "minimum": 1,
+            "title": "Last Question",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "number",
+          "title",
+          "first_question",
+          "last_question"
+        ],
+        "title": "Section",
+        "type": "object"
+      },
+      "SubmitRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "operation_id": {
+            "pattern": "^[A-Za-z0-9._:/-]{1,64}$",
+            "title": "Operation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id"
+        ],
+        "title": "SubmitRequest",
+        "type": "object"
+      },
+      "TimeLeftResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "seconds": {
+            "title": "Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seconds"
+        ],
+        "title": "TimeLeftResponse",
+        "type": "object"
+      },
+      "VerifyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "reg_no": {
+            "pattern": "^[A-Za-z0-9._:/-]{1,64}$",
+            "title": "Reg No",
+            "type": "string"
+          },
+          "exam_code": {
+            "pattern": "^[A-Za-z0-9._:/-]{1,64}$",
+            "title": "Exam Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reg_no",
+          "exam_code"
+        ],
+        "title": "VerifyRequest",
+        "type": "object"
+      }
+    }
+  }
+}

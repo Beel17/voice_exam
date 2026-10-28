@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+
+# Model files ship in the package, never in git; only their checksums are tracked.
+models/*
+!models/manifest.json
+
+# Local runtime state and real centre configuration (may hold device token hashes).
+data/
+config/centre.toml
+
+# Benchmark output (send it back; do not commit it).
+bench-report.json
