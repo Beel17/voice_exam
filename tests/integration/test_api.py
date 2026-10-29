@@ -14,7 +14,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from voice_agent.adapters.fake_adapter import FakeAdapter, load_fixture
 from voice_agent.api.runtime import Runtime
-from voice_agent.config import LimitSettings, LlmSettings, Settings
+from voice_agent.config import LimitSettings, LlmSettings, Settings, SpeechSettings
 from voice_agent.contract import SCHEMA_VERSION
 from voice_agent.main import create_app
 
@@ -51,6 +51,8 @@ def make_settings(tmp_path: Path, **overrides: Any) -> Settings:
         "device_token_sha256": (digest(TOKEN),),
         "admin_token_sha256": (digest(ADMIN),),
         "llm": LlmSettings(enabled=False),
+        # Tests inject a stand-in recogniser where they need one; none loads the real model.
+        "speech": SpeechSettings(enabled=False),
     }
     return Settings(**(values | overrides))
 
@@ -71,10 +73,11 @@ def send(ws: WebSocketTestSession, **message: Any) -> None:
 
 
 def turn(ws: WebSocketTestSession) -> list[dict[str, Any]]:
-    """Messages up to and including the next ``state``: one turn's worth."""
+    """Messages up to and including the next ``state``: one turn's worth. Audio frames
+    (when a voice is in use) are left out; tests about audio look at them directly."""
     messages = []
     while True:
-        message = ws.receive_json()
+        message = next_message(ws)
         messages.append(message)
         if message["type"] == "state":
             return messages
@@ -84,11 +87,21 @@ def spoken(messages: list[dict[str, Any]]) -> str:
     return " ".join(m["text"] for m in messages if m["type"] == "say")
 
 
+def next_message(ws: WebSocketTestSession) -> dict[str, Any]:
+    """The next JSON message, past any speech (audio frames and ``audio_end``)."""
+    while True:
+        frame = ws.receive()
+        if frame.get("text") is not None:
+            message: dict[str, Any] = json.loads(frame["text"])
+            if message["type"] != "audio_end":
+                return message
+
+
 def login(ws: WebSocketTestSession) -> tuple[str, str]:
     ws.send_text(hello())
-    assert ws.receive_json()["type"] == "say"  # sign-in prompt
+    assert next_message(ws)["type"] == "say"  # sign-in prompt
     send(ws, type="login", reg_no=REG_NO, exam_code=EXAM)
-    info = ws.receive_json()
+    info = next_message(ws)
     assert info["type"] == "session"
     return info["session_id"], spoken(turn(ws))
 
@@ -108,16 +121,36 @@ def runtime(client: TestClient) -> Runtime:
 
 def test_health(client: TestClient) -> None:
     assert client.get("/healthz").json() == {"status": "ok"}
-    assert client.get("/readyz").json() == {"status": "ok", "language_model": "disabled"}
+    assert client.get("/readyz").json() == {
+        "status": "ok",
+        "language_model": "disabled",
+        "speech": "disabled",
+        "voice": "disabled",
+    }
 
 
 def test_missing_model_files_mean_rules_only(tmp_path: Path, platform: FakeAdapter) -> None:
     settings = make_settings(tmp_path, llm=LlmSettings(model_file=tmp_path / "missing.gguf"))
     with TestClient(create_app(settings, adapter=platform)) as c:
-        assert c.get("/readyz").json() == {"status": "degraded", "language_model": "down"}
+        assert c.get("/readyz").json() == {
+            "status": "degraded",
+            "language_model": "down",
+            "speech": "disabled",
+            "voice": "disabled",
+        }
         with c.websocket_connect("/v1/session") as ws:
             login(ws)
             assert type_(ws, "start").startswith("Question 1 of 60.")
+
+
+def test_cue_sounds_are_served_for_the_pc_to_keep(client: TestClient) -> None:
+    for name in ("listening", "saved", "not_understood", "time_warning"):
+        response = client.get(f"/v1/cues/{name}.wav")
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "audio/wav"
+        assert response.content[:4] == b"RIFF"
+    assert client.get("/v1/cues/../config.wav").status_code == 404
+    assert client.get("/v1/cues/applause.wav").status_code == 404
 
 
 def test_no_interactive_docs_are_served(client: TestClient) -> None:
@@ -303,6 +336,8 @@ def test_status_and_audit_need_the_admin_token(client: TestClient) -> None:
             "unsynced_writes": 0,
             "language_model": "disabled",
             "language_model_restarts": 0,
+            "speech": "disabled",
+            "voice": "disabled",
             "degradation_level": 1,
         }
         audit = client.get(f"/v1/sessions/{session_id}/audit", headers=admin).json()
@@ -339,7 +374,10 @@ def test_full_exam_by_typed_sentences_with_a_forced_restart(
             letter = "ABCDE"[n % len(exam.questions[n - 1].options)]
             confirm = type_(ws, SAY_ANSWER[n % len(SAY_ANSWER)].format(letter))
             assert f"you chose option {letter}" in confirm, (n, confirm)
-            assert type_(ws, "yes").startswith("Saved."), n
+            send(ws, type="text", text="yes")
+            saved = turn(ws)
+            # Every save sounds the cue; "Saved." is spoken only the first few times.
+            assert {"type": "cue", "name": "saved", "volume": 0.75} in saved, n
 
     with (
         TestClient(create_app(settings, adapter=platform)) as first,

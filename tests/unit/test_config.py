@@ -1,9 +1,10 @@
+import os
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from voice_agent.config import CONFIG_ENV_VAR, Settings, load_settings
+from voice_agent.config import CONFIG_ENV_VAR, LlmSettings, Settings, load_settings
 
 DIGEST = "a" * 64
 
@@ -87,3 +88,14 @@ def test_settings_are_immutable() -> None:
     settings = Settings()
     with pytest.raises(ValidationError):
         settings.mode = "server"  # type: ignore[misc]
+
+
+def test_model_threads_follow_the_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(os, "cpu_count", lambda: 8)  # 4 cores, 8 threads
+    assert Settings(mode="pc").llm_threads == 4  # one candidate: most of the cores
+    assert Settings(mode="server").llm_threads == 2  # per slot, shared between candidates
+    assert Settings(mode="pc", llm=LlmSettings(threads=3)).llm_threads == 3
+    monkeypatch.setattr(os, "cpu_count", lambda: 2)
+    assert Settings(mode="pc").llm_threads == 2
+    monkeypatch.setattr(os, "cpu_count", lambda: 32)
+    assert Settings(mode="pc").llm_threads == 6

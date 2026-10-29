@@ -7,9 +7,9 @@ It starts the real service as a separate process (as in a centre), with the fake
 and drives it over real WebSockets. Run it on the target hardware and send back the table
 (and the JSON written to --out).
 
-Phase 1 has no speech yet, so "latency" here is from a sentence arriving to the first
-reply text leaving, and to the turn being complete. Recognition and synthesis time are
-added in phase 2; the budget below leaves room for them.
+Typed turns are timed from a sentence arriving to the first reply text and its first
+audio. Spoken turns (a synthetic voice speaking commands as microphone audio) are timed
+from releasing the talk key, so they include recognition: that is the number that matters.
 """
 
 import argparse
@@ -31,12 +31,27 @@ import httpx
 from websockets.asyncio.client import ClientConnection, connect
 
 from tools.procstats import cpu_seconds, machine, rss_bytes
+from voice_agent.config import pc_llm_threads
+from voice_agent.contract import AUDIO_BYTES_PER_SECOND
 
 # Targets from the brief, for the whole turn on the minimum tier. Phase 1 measures the
 # part before speech; it should be a small fraction of these.
 TARGET_RULES_S = 1.2
 TARGET_LLM_S = 2.5
 
+FRAME_BYTES = AUDIO_BYTES_PER_SECOND // 10  # 100 ms, as the client sends
+
+# Commands the spoken phase says aloud (synthetic voice: an easy case for recognition).
+SPOKEN = [
+    "go to question twelve",
+    "where am i",
+    "next",
+    "previous",
+    "repeat",
+    "go to question thirty",
+    "how much time is left",
+    "which questions have i not answered",
+]
 RULES_SCRIPT = [
     "go to question {n}",
     "A",
@@ -60,6 +75,7 @@ FREE_SPEECH = [
 @dataclass
 class Samples:
     first_say: list[float] = field(default_factory=list)
+    first_audio: list[float] = field(default_factory=list)  # empty when speech is off
     done: list[float] = field(default_factory=list)
 
     def summary(self) -> dict[str, float | int]:
@@ -69,21 +85,27 @@ class Samples:
 
         if not self.done:
             return {"turns": 0}
-        return {
+        summary: dict[str, float | int] = {
             "turns": len(self.done),
             "first_reply_p50_ms": pct(self.first_say, 0.5),
             "first_reply_p95_ms": pct(self.first_say, 0.95),
             "turn_p50_ms": pct(self.done, 0.5),
             "turn_p95_ms": pct(self.done, 0.95),
         }
+        if self.first_audio:
+            summary["first_audio_p50_ms"] = pct(self.first_audio, 0.5)
+            summary["first_audio_p95_ms"] = pct(self.first_audio, 0.95)
+        return summary
 
 
 class Candidate:
-    def __init__(self, ws: ClientConnection) -> None:
+    def __init__(self, ws: ClientConnection, speaks: bool) -> None:
         self.ws = ws
+        self.speaks = int(speaks)  # whether each say is followed by audio and audio_end
+        self.heard = ""  # what the service recognised, last time
 
     @classmethod
-    async def sign_in(cls, url: str, token: str, reg_no: str) -> "Candidate":
+    async def sign_in(cls, url: str, token: str, reg_no: str, speaks: bool) -> "Candidate":
         ws = await connect(url, max_size=2**20)
         hello = {
             "type": "hello",
@@ -93,26 +115,73 @@ class Candidate:
         }
         await ws.send(json.dumps(hello))
         await ws.send(json.dumps({"type": "login", "reg_no": reg_no, "exam_code": "UTME-SAMPLE"}))
-        candidate = cls(ws)
+        candidate = cls(ws, speaks)
         await candidate._until_state()
         return candidate
 
     async def turn(self, text: str, samples: Samples | None = None) -> None:
         began = time.perf_counter()
         await self.ws.send(json.dumps({"type": "text", "text": text}))
-        first = await self._until_state(began)
+        first_say, first_audio = await self._until_state(began)
         if samples is not None:
-            samples.first_say.append(first)
+            samples.first_say.append(first_say)
             samples.done.append(time.perf_counter() - began)
+            if first_audio is not None:
+                samples.first_audio.append(first_audio)
 
-    async def _until_state(self, began: float | None = None) -> float:
-        first: float | None = None
-        while True:
-            message = json.loads(await self.ws.recv())
-            if message["type"] == "say" and first is None and began is not None:
-                first = time.perf_counter() - began
-            if message["type"] == "state":
-                return first if first is not None else time.perf_counter() - (began or 0)
+    async def talk(self, pcm: bytes, samples: Samples) -> None:
+        """Hold the talk key, send the audio, release: timed from the release, which is
+        when the candidate has stopped speaking."""
+        await self.ws.send(json.dumps({"type": "talk_start"}))
+        for start in range(0, len(pcm), FRAME_BYTES):
+            await self.ws.send(pcm[start : start + FRAME_BYTES])
+        await self.ws.send(json.dumps({"type": "talk_end"}))
+        released = time.perf_counter()
+        first_say, first_audio = await self._until_state(released, after_heard=True)
+        samples.first_say.append(first_say)
+        samples.done.append(time.perf_counter() - released)
+        if first_audio is not None:
+            samples.first_audio.append(first_audio)
+
+    async def _until_state(
+        self, began: float | None = None, *, after_heard: bool = False
+    ) -> tuple[float, float | None]:
+        """Seconds to the first reply text and to its first audio, if any. A turn ends with
+        the ``state`` message and, when a voice is in use, the last ``audio_end``. The
+        service also sends a bare ``state`` every 30 s (time left), so only a state that
+        follows this turn's reply counts: its ``say`` or ``cue`` or, for speech, its
+        ``heard``."""
+        start = began if began is not None else time.perf_counter()
+        first_say: float | None = None
+        first_audio: float | None = None
+        open_replies = 0
+        stated = False
+        mine = False
+        while not (stated and open_replies == 0):
+            frame = await self.ws.recv()
+            now = time.perf_counter() - start
+            if isinstance(frame, bytes):
+                if mine and first_audio is None:
+                    first_audio = now
+                continue
+            message = json.loads(frame)
+            if message["type"] in ("say", "cue") and not after_heard:
+                mine = True
+            if message["type"] == "say":
+                if mine and first_say is None:
+                    first_say = now
+                open_replies += self.speaks
+            elif message["type"] == "audio_end":
+                open_replies -= 1
+                await self.ws.send(
+                    json.dumps({"type": "playback_done", "utterance_id": message["utterance_id"]})
+                )
+            elif message["type"] == "heard":
+                self.heard = message["text"]
+                mine = True
+            elif message["type"] == "state":
+                stated = mine
+        return (first_say if first_say is not None else time.perf_counter() - start), first_audio
 
     async def close(self) -> None:
         await self.ws.close()
@@ -123,9 +192,9 @@ def script(k: int) -> str:
     return RULES_SCRIPT[k % len(RULES_SCRIPT)].format(n=n)
 
 
-async def rules_latency(url: str, token: str, turns: int) -> Samples:
+async def rules_latency(url: str, token: str, turns: int, speaks: bool) -> Samples:
     samples = Samples()
-    c = await Candidate.sign_in(url, token, "LOAD00001")
+    c = await Candidate.sign_in(url, token, "LOAD00001", speaks)
     await c.turn("start")
     for k in range(turns):
         await c.turn(script(k), samples)
@@ -133,9 +202,9 @@ async def rules_latency(url: str, token: str, turns: int) -> Samples:
     return samples
 
 
-async def llm_latency(url: str, token: str, turns: int) -> Samples:
+async def llm_latency(url: str, token: str, turns: int, speaks: bool) -> Samples:
     samples = Samples()
-    c = await Candidate.sign_in(url, token, "LOAD00002")
+    c = await Candidate.sign_in(url, token, "LOAD00002", speaks)
     await c.turn("start")
     for k in range(turns):
         await c.turn(FREE_SPEECH[k % len(FREE_SPEECH)], samples)
@@ -144,14 +213,61 @@ async def llm_latency(url: str, token: str, turns: int) -> Samples:
     return samples
 
 
-async def ram_per_session(url: str, token: str, pid: int, sessions: int) -> dict[str, Any]:
-    first = await Candidate.sign_in(url, token, "LOAD00003")
+def spoken(sentences: list[str], voice_dir: Path) -> list[bytes]:
+    """Each sentence said by a Piper voice, as the PC would send it: 16 kHz 16-bit PCM,
+    with the moment of silence before speech that holding the talk key gives."""
+    import numpy as np
+    import sherpa_onnx
+
+    vits = sherpa_onnx.OfflineTtsVitsModelConfig(
+        model=str(next(voice_dir.glob("*.onnx"))),
+        tokens=str(voice_dir / "tokens.txt"),
+        data_dir=str(voice_dir / "espeak-ng-data"),
+    )
+    model = sherpa_onnx.OfflineTtsModelConfig(vits=vits, num_threads=1)
+    tts = sherpa_onnx.OfflineTts(sherpa_onnx.OfflineTtsConfig(model=model))
+    clips = []
+    for sentence in sentences:
+        audio = tts.generate(sentence, sid=0, speed=1.0)
+        x = np.concatenate([np.zeros(int(0.3 * audio.sample_rate)), np.asarray(audio.samples)])
+        n = int(len(x) * 16000 / audio.sample_rate)
+        x = np.interp(np.linspace(0, len(x) - 1, n), np.arange(len(x)), x)
+        clips.append(bytes((np.clip(x, -1, 1) * 32767).astype("<i2").tobytes()))
+    return clips
+
+
+async def spoken_latency(
+    url: str, token: str, turns: int, speaks: bool, voice_dir: Path
+) -> dict[str, Any]:
+    """The full spoken turn: recognition, understanding, the reply's first audio."""
+    clips = spoken(SPOKEN, voice_dir)
+    samples = Samples()
+    misheard: list[tuple[str, str]] = []
+    c = await Candidate.sign_in(url, token, "LOAD00004", speaks)
+    await c.turn("start")
+    for k in range(turns):
+        said = SPOKEN[k % len(SPOKEN)]
+        c.heard = ""
+        await c.talk(clips[k % len(SPOKEN)], samples)
+        if c.heard.lower().strip(" .?!") != said:
+            misheard.append((said, c.heard))
+    await c.close()
+    return samples.summary() | {
+        "heard_exactly": f"{turns - len(misheard)}/{turns}",
+        "misheard": misheard[:5],
+    }
+
+
+async def ram_per_session(
+    url: str, token: str, pid: int, sessions: int, speaks: bool
+) -> dict[str, Any]:
+    first = await Candidate.sign_in(url, token, "LOAD00003", speaks)
     await first.turn("start")  # warms shared caches, so they are not charged to sessions
     await asyncio.sleep(0.5)
     before = rss_bytes(pid)
     held = []
     for k in range(sessions):
-        c = await Candidate.sign_in(url, token, f"LOAD{k + 10:05d}")
+        c = await Candidate.sign_in(url, token, f"LOAD{k + 10:05d}", speaks)
         await c.turn("start")
         held.append(c)
     await asyncio.sleep(0.5)
@@ -166,11 +282,18 @@ async def ram_per_session(url: str, token: str, pid: int, sessions: int) -> dict
 
 
 async def saturation(
-    url: str, token: str, pid: int, candidates: int, seconds: float, turn_interval_s: float
+    url: str,
+    token: str,
+    pid: int,
+    candidates: int,
+    seconds: float,
+    turn_interval_s: float,
+    speaks: bool,
 ) -> dict[str, Any]:
     """Many candidates with no pause between turns: the service's ceiling."""
     clients = [
-        await Candidate.sign_in(url, token, f"LOAD{k + 1000:05d}") for k in range(candidates)
+        await Candidate.sign_in(url, token, f"LOAD{k + 1000:05d}", speaks)
+        for k in range(candidates)
     ]
     for c in clients:
         await c.turn("start")
@@ -225,7 +348,8 @@ def start_service(
         f'device_token_sha256 = ["{hashlib.sha256(token.encode()).hexdigest()}"]\n'
         f'admin_token_sha256 = ["{hashlib.sha256(token.encode()).hexdigest()}"]\n'
         f"[limits]\nmax_messages_per_10s = 10000\n"
-        f"[adapter]\nload_candidates = {args.sessions + args.candidates + 1100}\n[llm]\n{llm}\n",
+        f"[adapter]\nload_candidates = {args.sessions + args.candidates + 1100}\n[llm]\n{llm}\n"
+        f"[speech]\nenabled = {'false' if args.no_speech else 'true'}\n",
         encoding="utf-8",
     )
     with (workdir / "service.log").open("wb") as log:  # the child keeps its own handle
@@ -272,19 +396,29 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="voice-bench-", ignore_cleanup_errors=True) as tmp:
         process, port, pid = start_service(Path(tmp), args, token)
         url = f"ws://127.0.0.1:{port}/v1/session"
+        ready = httpx.get(f"http://127.0.0.1:{port}/readyz", trust_env=False).json()
+        speaks = ready.get("voice") == "running"
         try:
-            report: dict[str, Any] = {"machine": machine()}
+            report: dict[str, Any] = {"machine": machine(), "service": ready}
             report["service_rss_at_start_mb"] = round(rss_bytes(pid) / 2**20, 1)
             print("rules path ...", flush=True)
-            report["rules_path"] = (await rules_latency(url, token, args.turns)).summary()
+            report["rules_path"] = (await rules_latency(url, token, args.turns, speaks)).summary()
             if args.llm_model:
                 print("language model path ...", flush=True)
-                report["llm_path"] = (await llm_latency(url, token, args.llm_turns)).summary()
+                report["llm_path"] = (
+                    await llm_latency(url, token, args.llm_turns, speaks)
+                ).summary()
+            voice = Path(args.voice_dir)
+            if speaks and voice.is_dir():
+                print("spoken turns ...", flush=True)
+                report["spoken_path"] = await spoken_latency(
+                    url, token, args.spoken_turns, speaks, voice
+                )
             print("memory per session ...", flush=True)
-            report["memory"] = await ram_per_session(url, token, pid, args.sessions)
+            report["memory"] = await ram_per_session(url, token, pid, args.sessions, speaks)
             print("saturation ...", flush=True)
             report["saturation"] = await saturation(
-                url, token, pid, args.candidates, args.seconds, args.turn_interval
+                url, token, pid, args.candidates, args.seconds, args.turn_interval, speaks
             )
         finally:
             process.terminate()
@@ -295,15 +429,19 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
 def show(report: dict[str, Any]) -> None:
     m = report["machine"]
     print(f"\n{m['cpu']} | {m['logical_cores']} logical cores | {m['ram_gb']} GB | {m['os']}")
-    rows = [("rules path", report["rules_path"], TARGET_RULES_S)]
+    rows = [("rules path, typed", report["rules_path"], TARGET_RULES_S)]
+    if "spoken_path" in report:
+        rows.insert(0, ("spoken, from release", report["spoken_path"], TARGET_RULES_S))
     if "llm_path" in report:
         rows.append(("language model path", report["llm_path"], TARGET_LLM_S))
     rows.append(("rules path, saturated", report["saturation"], TARGET_RULES_S))
-    print(f"\n{'':24}{'turns':>7}{'first reply p50/p95':>24}{'whole turn p50/p95':>22}  target")
+    heard = "first audio" if "first_audio_p50_ms" in rows[0][1] else "first reply text"
+    print(f"\n{'':24}{'turns':>7}{heard + ' p50/p95':>26}{'whole turn p50/p95':>22}  target")
     for name, s, target in rows:
-        first = f"{s['first_reply_p50_ms']:.0f} / {s['first_reply_p95_ms']:.0f} ms"
+        key = "first_audio" if "first_audio_p50_ms" in s else "first_reply"
+        first = f"{s[key + '_p50_ms']:.0f} / {s[key + '_p95_ms']:.0f} ms"
         whole = f"{s['turn_p50_ms']:.0f} / {s['turn_p95_ms']:.0f} ms"
-        print(f"{name:24}{s['turns']:>7}{first:>24}{whole:>22}  < {target} s incl. speech")
+        print(f"{name:24}{s['turns']:>7}{first:>26}{whole:>22}  < {target} s")
     mem, sat = report["memory"], report["saturation"]
     print(
         f"\nservice RAM: {report['service_rss_at_start_mb']} MB at start, "
@@ -318,7 +456,12 @@ def show(report: dict[str, Any]) -> None:
     print(
         f"=> about {sat['sessions_per_core_rules_path']} sessions per core on the rules path "
         f"(one turn every {sat['assumed_seconds_between_turns']:.0f} s per candidate; "
-        "speech and the model add their own cost in phase 2)"
+        + (
+            "synthesis included, recognition not: "
+            if report["service"].get("voice") == "running"
+            else "without speech: "
+        )
+        + "replies are typed here, so phase 3 measures recognition load separately)"
     )
 
 
@@ -337,8 +480,17 @@ def main() -> None:
     )
     parser.add_argument("--llm-binary", default="models/llama.cpp/llama-server")
     parser.add_argument("--llm-model", help="GGUF file; enables the model path")
-    parser.add_argument("--llm-threads", type=int, default=2)
+    parser.add_argument(
+        "--llm-threads", type=int, default=pc_llm_threads(), help="default: as in PC mode"
+    )
     parser.add_argument("--llm-slots", type=int, default=1)
+    parser.add_argument("--no-speech", action="store_true", help="text and keys only")
+    parser.add_argument("--spoken-turns", type=int, default=40)
+    parser.add_argument(
+        "--voice-dir",
+        default="models/speech/tts/vits-piper-en_US-lessac-medium",
+        help="voice the benchmark speaks with (any shipped voice)",
+    )
     parser.add_argument("--out", default="bench-report.json")
     args = parser.parse_args()
     report = asyncio.run(run(args))

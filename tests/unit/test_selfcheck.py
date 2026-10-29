@@ -63,3 +63,12 @@ def test_a_missing_or_broken_manifest_fails(models: Path) -> None:
 def test_a_model_not_in_use_does_not_matter(models: Path) -> None:
     (models / "other.gguf").write_bytes(b"changed, but not in use")
     assert problems(models) == []
+
+
+def test_plain_file_checks_ignore_the_rest_of_the_folder(models: Path) -> None:
+    from voice_agent.selfcheck import file_problems
+
+    (models / "llama.cpp" / "ggml.dll").write_bytes(b"changed, but not asked about")
+    assert file_problems(models, [models / "m.gguf"]) == []
+    (models / "m.gguf").write_bytes(b"tampered")
+    assert file_problems(models, [models / "m.gguf"]) == ["m.gguf does not match the manifest"]

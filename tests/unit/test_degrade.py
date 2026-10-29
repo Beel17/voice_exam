@@ -10,7 +10,9 @@ HEALTHY = Load(language_model_up=True, language_model_refusals=0)
     [
         (HEALTHY, Level.NORMAL),
         (Load(language_model_up=False, language_model_refusals=0), Level.RULES_ONLY),
-        (Load(language_model_up=True, language_model_refusals=2), Level.RULES_ONLY),
+        # One slow answer is not a shortage: rules only from the third in the window.
+        (Load(language_model_up=True, language_model_refusals=2), Level.NORMAL),
+        (Load(language_model_up=True, language_model_refusals=3), Level.RULES_ONLY),
         (Load(True, 0, synthesis_queued=6, synthesis_workers=2), Level.NORMAL),
         (Load(True, 0, synthesis_queued=7, synthesis_workers=2), Level.FIXED_PROMPTS),
         (Load(True, 0, recognition_queued=8, recognition_workers=4), Level.NORMAL),

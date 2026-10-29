@@ -1,4 +1,4 @@
-import json
+import re
 from typing import Any, get_args
 
 import pytest
@@ -7,6 +7,7 @@ from voice_agent.contract import Key
 from voice_agent.understanding.intents import (
     ACTION_TYPES,
     INTENT_TYPES,
+    LLM_OUTPUT_PREFIX,
     MAX_LLM_OUTPUT_CHARS,
     Answer,
     ChangeAnswer,
@@ -23,7 +24,8 @@ from voice_agent.understanding.intents import (
     Unclear,
     action_for_key,
     intent_name,
-    llm_output_schema,
+    llm_output_grammar,
+    llm_output_text,
     parse_llm_output,
 )
 
@@ -56,64 +58,28 @@ def test_every_action_has_a_prompt_description() -> None:
         assert len(t.__doc__) < 100, "descriptions go into every prompt; keep them short"
 
 
-# --- Schema the model is forced through -------------------------------------------------
+# --- Grammar the model is forced through ------------------------------------------------
 
 
-def _objects(node: Any) -> list[dict[str, Any]]:
-    """Every JSON-schema object node, wherever it is nested."""
-    found: list[dict[str, Any]] = []
-    if isinstance(node, dict):
-        if node.get("type") == "object":
-            found.append(node)
-        for value in node.values():
-            found.extend(_objects(value))
-    elif isinstance(node, list):
-        for item in node:
-            found.extend(_objects(item))
-    return found
+def test_grammar_offers_exactly_the_intents() -> None:
+    grammar = llm_output_grammar()
+    root = grammar.splitlines()[0]
+    assert root.count(" | ") == len(INTENT_TYPES) - 1
+    for t in INTENT_TYPES:
+        assert f'("{intent_name(t)}\\"' in root, intent_name(t)
 
 
-def test_schema_offers_exactly_the_intents() -> None:
-    schema = llm_output_schema()
-    consts = {
-        d["properties"]["action"]["const"]
-        for d in schema["$defs"].values()
-        if "args" in d.get("properties", {})
-    }
-    assert consts == {intent_name(t) for t in INTENT_TYPES}
-    assert len(schema["oneOf"]) == len(INTENT_TYPES)
+def test_grammar_has_no_free_text() -> None:
+    # Three rules, and the only character classes are option letters and digits: there is
+    # nowhere in the output for a word of the model's own.
+    grammar = llm_output_grammar()
+    assert [line.split(" ::= ")[0] for line in grammar.splitlines()] == ["root", "letter", "number"]
+    assert set(re.findall(r"\[[^\]]*\]", grammar)) == {"[A-E]", "[1-9]", "[0-9]"}
 
 
-def test_schema_has_one_fixed_shape_per_intent() -> None:
-    # No open objects (nowhere for free text to go) and no optional fields (nothing for a
-    # small model to leave out); together these give the grammar a single shape.
-    for obj in _objects(llm_output_schema()):
-        assert obj.get("additionalProperties") is False, obj.get("title")
-        assert set(obj.get("required", [])) == set(obj.get("properties", {})), obj.get("title")
-
-
-def test_schema_contains_no_free_text_fields() -> None:
-    def strings(node: Any) -> list[dict[str, Any]]:
-        out: list[dict[str, Any]] = []
-        if isinstance(node, dict):
-            if node.get("type") == "string":
-                out.append(node)
-            for value in node.values():
-                out.extend(strings(value))
-        elif isinstance(node, list):
-            for item in node:
-                out.extend(strings(item))
-        return out
-
-    for node in strings(llm_output_schema()):
-        assert "const" in node or "enum" in node, node
-
-
-def test_schema_is_stable_json() -> None:
-    # Compiled to a grammar and cached; it must be deterministic between runs.
-    assert json.dumps(llm_output_schema(), sort_keys=True) == json.dumps(
-        llm_output_schema(), sort_keys=True
-    )
+def test_grammar_is_stable() -> None:
+    # Sent with every request; llama.cpp compiles it each time, so it must not vary.
+    assert llm_output_grammar() == llm_output_grammar()
 
 
 # --- Parsing model output ---------------------------------------------------------------
@@ -137,17 +103,21 @@ def one_of_each() -> list[Any]:
 
 @pytest.mark.parametrize("intent", one_of_each(), ids=lambda i: i.action)
 def test_every_intent_round_trips_through_the_parser(intent: Any) -> None:
-    assert parse_llm_output(intent.model_dump_json()) == intent
+    text = llm_output_text(intent)
+    assert text.startswith(LLM_OUTPUT_PREFIX)
+    assert parse_llm_output(text) == intent
 
 
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
-        ('{"action": "next", "args": {}}', "next"),
-        ('{"action": "go_to", "args": {"question": 20}}', "go_to"),
-        ('{"action": "review_answers", "args": {"question": null}}', "review_answers"),
-        ('{"action": "change_answer", "args": {"choice": "A", "question": null}}', "change_answer"),
-        ('  {"action": "not_allowed", "args": {}}\n', "not_allowed"),
+        ('{"action": "next"}', "next"),
+        ('{"action": "go_to", "question": 20}', "go_to"),
+        ('{"action": "review_answers"}', "review_answers"),
+        ('{"action": "review_answers", "question": 12}', "review_answers"),
+        ('{"action": "change_answer", "choice": "A"}', "change_answer"),
+        ('{"action": "change_answer", "choice": "A", "question": 7}', "change_answer"),
+        ('  {"action": "not_allowed"}\n', "not_allowed"),
     ],
 )
 def test_valid_model_output_parses(raw: str, expected: str) -> None:
@@ -162,29 +132,36 @@ def test_valid_model_output_parses(raw: str, expected: str) -> None:
         "The answer is B.",
         "null",
         "[]",
-        '{"action": "next"}',  # args missing: the grammar always emits them
-        '{"action": "reveal_answer", "args": {}}',
-        '{"action": "save_answer", "args": {"choice": "B"}}',
-        '{"action": "next", "args": {"say": "The answer is B"}}',
-        '{"action": "next", "args": {}, "reply": "Sure! The answer is B."}',
-        '{"action": "answer", "args": {"choice": "F"}}',
-        '{"action": "answer", "args": {"choice": "b"}}',
-        '{"action": "answer", "args": {}}',
-        '{"action": "go_to", "args": {"question": 0}}',
-        '{"action": "go_to", "args": {"question": 1000}}',
-        '{"action": "go_to", "args": {"question": "twenty"}}',
-        '{"action": "go_to", "args": {"question": 2.5}}',
-        # Values a lax parser would coerce; the grammar never emits them.
-        '{"action": "go_to", "args": {"question": "20"}}',
-        '{"action": "go_to", "args": {"question": 20.0}}',
-        '{"action": "go_to", "args": {"question": true}}',
-        # Fields a lax parser would fill from defaults.
-        '{"action": "change_answer", "args": {"choice": "A"}}',
-        '{"action": "review_answers", "args": {}}',
-        '{"action": "go_to_section", "args": {"section": 0}}',
-        '{"action": "next", "args": {}}{"action": "submit", "args": {}}',
-        '{"action": "submit", "args": {}, "action": "next"}',
-        '{"action": "next", "args": {"x": 1, "x": 2}}',
+        "{}",
+        '{"action": 5}',
+        '{"action": "reveal_answer"}',
+        '{"action": "save_answer", "choice": "B"}',
+        '{"action": "next", "say": "The answer is B"}',
+        '{"action": "next", "reply": "Sure! The answer is B."}',
+        '{"action": "answer", "choice": "F"}',
+        '{"action": "answer", "choice": "b"}',
+        '{"action": "answer"}',
+        '{"action": "go_to", "question": 0}',
+        '{"action": "go_to", "question": 1000}',
+        '{"action": "go_to", "question": "twenty"}',
+        '{"action": "go_to", "question": 2.5}',
+        # The old nested form, and values a lax parser would coerce; the grammar never
+        # emits them.
+        '{"action": "next", "args": {}}',
+        '{"action": "go_to", "args": {"question": 20}}',
+        '{"action": "go_to", "question": "20"}',
+        '{"action": "go_to", "question": 20.0}',
+        '{"action": "go_to", "question": true}',
+        # Nulls and other spellings of the canonical text.
+        '{"action": "review_answers", "question": null}',
+        '{"action": "change_answer", "choice": "A", "question": null}',
+        '{"action": "change_answer", "question": 7, "choice": "A"}',
+        '{"action":"next"}',
+        '{"choice": "A", "action": "answer"}',
+        '{"action": "go_to_section", "section": 0}',
+        '{"action": "next"}{"action": "submit"}',
+        '{"action": "submit", "action": "next"}',
+        '{"action": "go_to", "question": 1, "question": 2}',
     ],
 )
 def test_anything_else_becomes_unclear(raw: str) -> None:
@@ -192,7 +169,7 @@ def test_anything_else_becomes_unclear(raw: str) -> None:
 
 
 def test_overlong_output_is_unclear_without_parsing() -> None:
-    padded = '{"action": "next", "args": {}}' + " " * MAX_LLM_OUTPUT_CHARS
+    padded = '{"action": "next"}' + " " * MAX_LLM_OUTPUT_CHARS
     assert parse_llm_output(padded) == Unclear()
 
 

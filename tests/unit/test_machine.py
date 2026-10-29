@@ -461,7 +461,7 @@ def test_status_replies(script: Make) -> None:
     assert s.say(i.WhereAmI()) == (
         "You are on question 18 of 60, in Mathematics. Your answer for question 18 is A."
     )
-    assert s.say(i.CountAnswered()) == "You have answered 2 of 60 questions."
+    assert s.say(i.CountAnswered()) == "You have answered 2 of 60 questions. 58 are left."
     assert s.say(i.ListUnanswered()) == "You have not answered questions 1 to 16 and 19 to 60."
     one = i.ReviewAnswers(args=i.MaybeQuestionArgs(question=17))
     assert s.say(one) == "For question 17 you chose C."
@@ -534,6 +534,13 @@ def test_keyboard_is_offered_after_two_misunderstandings(script: Make) -> None:
     assert "keyboard" in s.say(i.Unclear())
     s.say(i.Help())
     assert "keyboard" not in s.say(i.Unclear())
+
+
+def test_the_keyboard_offer_is_not_repeated_on_every_miss(script: Make) -> None:
+    # A tester heard it on 8 misses in a row: once per run, then every fifth miss.
+    s = started(script())
+    offered = ["keyboard" in s.say(i.Unclear()) for _ in range(12)]
+    assert [n + 1 for n, yes in enumerate(offered) if yes] == [2, 7, 12]
 
 
 def test_out_of_scope_requests_get_one_neutral_reply(script: Make) -> None:

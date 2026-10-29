@@ -42,11 +42,15 @@ class LlmSettings(BaseModel):
     server_binary: Path = Path("models/llama.cpp/llama-server")
     model_file: Path = Path("models/qwen2.5-1.5b-instruct-q4_k_m.gguf")
     port: int = Field(default=8766, ge=1, le=65535)
-    threads: int = Field(default=2, ge=1, le=64)
+    # None: by mode. A PC serves one candidate, whose recognition, understanding and speech
+    # run one after another, so the model may use most of the cores; a centre server
+    # shares them between candidates, so each slot gets two.
+    threads: int | None = Field(default=None, ge=1, le=64)
     # Sentences the model can work on at once; more slots need more cores and memory.
     slots: int = Field(default=1, ge=1, le=16)
     context_per_slot: int = Field(default=2048, ge=512, le=8192)
-    timeout_s: float = Field(default=2.0, gt=0, le=10)
+    # The candidate hears "one moment" after the first second; past this, rules only.
+    timeout_s: float = Field(default=3.0, gt=0, le=10)
     max_waiting: int = Field(default=4, ge=0, le=64)
     max_calls_per_minute: int = Field(default=20, ge=1, le=600)
 
@@ -61,6 +65,34 @@ class AdapterSettings(BaseModel):
     timeout_s: float = Field(default=2.0, gt=0, le=30)
     # Fake platform only: extra sample-exam candidates for load tests (LOAD00001...).
     load_candidates: int = Field(default=0, ge=0, le=10_000)
+
+
+class SpeechSettings(BaseModel):
+    """Speech in and out. With speech off the service is text and keys only."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enabled: bool = True
+    recognizer_dir: Path = Path(
+        "models/speech/asr/sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06"
+    )
+    # One recogniser per worker, one core each: the pool size is speech's share of the CPU.
+    recognition_workers: int = Field(default=1, ge=1, le=32)
+    recognition_queue: int = Field(default=8, ge=1, le=256)
+    # A candidate waiting longer than this for recognition to start hears "one moment".
+    recognition_start_within_s: float = Field(default=1.5, gt=0, le=10)
+    # The voice every candidate hears (fairness: one voice per centre). Shipped: en_US
+    # lessac (female), en_GB alan (male), en_GB jenny_dioco (female); testers choose.
+    voice_dir: Path = Path("models/speech/tts/vits-piper-en_US-lessac-medium")
+    synthesis_workers: int = Field(default=1, ge=1, le=32)
+    synthesis_queue: int = Field(default=16, ge=1, le=512)
+    synthesis_start_within_s: float = Field(default=1.5, gt=0, le=10)
+
+
+def pc_llm_threads() -> int:
+    """Model threads for a PC: about its physical cores, at least 2, at most 6 (beyond
+    that a small model gains little)."""
+    return min(6, max(2, (os.cpu_count() or 4) // 2))
 
 
 class Settings(BaseSettings):
@@ -85,6 +117,13 @@ class Settings(BaseSettings):
     adapter: AdapterSettings = AdapterSettings()
     limits: LimitSettings = LimitSettings()
     llm: LlmSettings = LlmSettings()
+    speech: SpeechSettings = SpeechSettings()
+
+    @property
+    def llm_threads(self) -> int:
+        if self.llm.threads is not None:
+            return self.llm.threads
+        return 2 if self.mode == "server" else pc_llm_threads()
 
     @property
     def bind_host(self) -> str:

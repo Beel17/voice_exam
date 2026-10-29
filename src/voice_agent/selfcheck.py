@@ -3,11 +3,13 @@
 ``models/manifest.json`` (written by tools/fetch_models.py) holds the SHA-256 of every
 model file. The service uses a model only if the model file and every manifest entry in
 the server's folder (the binary and its libraries) are present and match, so every centre
-and every PC runs the same, untampered models. The hardware speed test comes in phase 6.
+and every PC runs the same, untampered models. Speech models are checked the same way.
+The hardware speed test comes in phase 6.
 """
 
 import hashlib
 import json
+from collections.abc import Iterable
 from pathlib import Path
 
 _CHUNK = 1 << 20
@@ -22,7 +24,17 @@ def _sha256(path: Path) -> str:
 
 
 def model_file_problems(models_dir: Path, server_binary: Path, model_file: Path) -> list[str]:
-    """Everything wrong with the files the language model needs; empty if all is well."""
+    """Everything wrong with the files the language model needs; empty if all is well.
+    The server loads libraries from its own folder, so all of those must match too."""
+    return _problems(models_dir, [model_file, server_binary], whole_folder_of=server_binary)
+
+
+def file_problems(models_dir: Path, files: Iterable[Path]) -> list[str]:
+    """Everything wrong with these model files (a recogniser, a voice)."""
+    return _problems(models_dir, list(files), whole_folder_of=None)
+
+
+def _problems(models_dir: Path, files: list[Path], whole_folder_of: Path | None) -> list[str]:
     manifest_path = models_dir / "manifest.json"
     try:
         expected: dict[str, str] = json.loads(manifest_path.read_text("utf-8"))["files"]
@@ -31,17 +43,17 @@ def model_file_problems(models_dir: Path, server_binary: Path, model_file: Path)
 
     root = models_dir.resolve()
     to_check: dict[str, Path] = {}
-    for path in (model_file, server_binary):
+    for path in files:
         try:
             name = path.resolve().relative_to(root).as_posix()
         except ValueError:
             return [f"{path} is outside {models_dir}, so it cannot be verified"]
         to_check[name] = path
-    # The binary loads libraries from its own folder: all of them must match too.
-    server_dir = server_binary.resolve().parent.relative_to(root).as_posix()
-    for name in expected:
-        if server_dir != "." and name.startswith(server_dir + "/"):
-            to_check.setdefault(name, models_dir / name)
+    if whole_folder_of is not None:
+        folder = whole_folder_of.resolve().parent.relative_to(root).as_posix()
+        for name in expected:
+            if folder != "." and name.startswith(folder + "/"):
+                to_check.setdefault(name, models_dir / name)
 
     problems = []
     for name, path in sorted(to_check.items()):

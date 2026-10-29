@@ -1,0 +1,49 @@
+Voice exam: tester feedback
+===========================
+
+Fill in one copy per tester. Write the answers under each question; short is fine.
+Don't write the tester's name: a number or initials is enough.
+
+Tester:
+Date:
+PC (laptop or desktop; headset, or built-in microphone and speakers):
+Did the tester use a screen reader (which one)?
+Session transcript file(s) for this tester (in this folder, e.g. session-01.txt):
+
+
+The voice
+---------
+1. Which voice was easiest to follow: 1 (American woman), 2 (British man) or
+   3 (British woman)? Why?
+
+2. Was the normal speed right? Did the tester change it ("faster", "slower")? To what?
+
+3. Any words, numbers or symbols read wrongly or unclearly? Which question?
+
+
+Being understood
+----------------
+4. How often did the service get what the tester said wrong? Examples, if remembered.
+
+5. Was holding Space to talk comfortable? Did the tester ever release too early, or
+   forget to hold it?
+
+6. Did the tester use the keys (1-5, Enter, Esc, R, N, P)? When, and why?
+
+
+Wording and sounds
+------------------
+7. Was anything the service said confusing, too long, or repeated too often?
+
+8. Were the sounds (listening, saved, not understood, time warning) clear? Too loud,
+   too quiet, or annoying?
+
+9. Did the tester always know where they were in the exam, and whether an answer had
+   been saved?
+
+
+Overall
+-------
+10. Could the tester take a real exam this way? What would stop them?
+
+11. Anything else:

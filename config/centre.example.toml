@@ -22,7 +22,14 @@ max_utterance_chars = 300
 enabled = true
 server_binary = "models/llama.cpp/llama-server"
 model_file = "models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
-threads = 2
+# threads = 4   # leave unset: most of the cores in PC mode, 2 per slot in server mode
 slots = 1
-timeout_s = 2.0
+timeout_s = 3.0
 max_calls_per_minute = 20
+
+[speech]
+# Set enabled = false for text and keys only. If the speech models are missing or do not
+# match models/manifest.json, the service starts in keyboard mode and says why in its log.
+enabled = true
+# One recogniser per worker, one core each: the pool size is speech's share of the CPU.
+recognition_workers = 1

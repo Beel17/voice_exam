@@ -15,14 +15,14 @@ from tools.fetch_models import write_manifest
 
 from voice_agent.adapters.fake_adapter import FakeAdapter
 from voice_agent.api.runtime import Runtime
-from voice_agent.config import LlmSettings, Settings
+from voice_agent.config import LlmSettings, Settings, SpeechSettings
 from voice_agent.contract import SCHEMA_VERSION
 from voice_agent.main import _every, _keep_model, _watch_load, create_app
 from voice_agent.runtime.degrade import Degrader, Level
 
 FAKE = Path(__file__).parents[1] / "fakes" / "fake_llama_server.py"
 TOKEN = "device-token-for-tests-0001"
-DOWN = {"status": "degraded", "language_model": "down"}
+DOWN = {"status": "degraded", "language_model": "down", "speech": "disabled", "voice": "disabled"}
 
 
 def free_port() -> int:
@@ -66,6 +66,7 @@ def settings(tmp_path: Path) -> Settings:
         models_dir=models,
         device_token_sha256=(hashlib.sha256(TOKEN.encode()).hexdigest(),),
         llm=LlmSettings(server_binary=binary, model_file=model, port=free_port(), timeout_s=5),
+        speech=SpeechSettings(enabled=False),
     )
 
 
@@ -79,7 +80,12 @@ def readiness(settings: Settings) -> dict[str, str]:
 def test_free_speech_goes_to_the_model(settings: Settings) -> None:
     app = create_app(settings, adapter=FakeAdapter.with_bundled_fixtures())
     with TestClient(app) as client, client.websocket_connect("/v1/session") as ws:
-        assert client.get("/readyz").json() == {"status": "ok", "language_model": "running"}
+        assert client.get("/readyz").json() == {
+            "status": "ok",
+            "language_model": "running",
+            "speech": "disabled",
+            "voice": "disabled",
+        }
         hello = {
             "type": "hello",
             "schema_version": SCHEMA_VERSION,
@@ -177,6 +183,15 @@ class _Runtime:
 
     def language_model_state(self) -> str:
         return self.model
+
+    def speech_state(self) -> str:
+        return "disabled"
+
+    def recognition_stats(self) -> None:
+        return None
+
+    def synthesis_stats(self) -> None:
+        return None
 
 
 async def test_the_load_watch_moves_the_level() -> None:

@@ -3,12 +3,14 @@
 import os
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict
 
 from voice_agent.api.runtime import Runtime
 from voice_agent.api.ws import token_allowed
+from voice_agent.speech import cues
+from voice_agent.speech.cues import CUE_NAMES
 
 router = APIRouter()
 _bearer = HTTPBearer(auto_error=False)
@@ -38,6 +40,8 @@ class _Body(BaseModel):
 class Health(_Body):
     status: Literal["ok", "degraded"]
     language_model: Literal["running", "down", "disabled"]
+    speech: Literal["running", "down", "disabled"]
+    voice: Literal["running", "down", "disabled"]
 
 
 class Status(_Body):
@@ -49,6 +53,8 @@ class Status(_Body):
     unsynced_writes: int
     language_model: Literal["running", "down", "disabled"]
     language_model_restarts: int
+    speech: Literal["running", "down", "disabled"]
+    voice: Literal["running", "down", "disabled"]
     # 0 normal, 1 rules only, 2 fixed prompts, 3 keyboard (see runtime/degrade.py).
     degradation_level: int
 
@@ -68,7 +74,23 @@ async def healthz() -> dict[str, str]:
 @router.get("/readyz")
 async def readyz(rt: Annotated[Runtime, Depends(runtime)]) -> Health:
     model = rt.language_model_state()
-    return Health(status="ok" if model != "down" else "degraded", language_model=model)
+    speech, voice = rt.speech_state(), rt.voice_state()
+    healthy = "down" not in (model, speech, voice)
+    return Health(
+        status="ok" if healthy else "degraded", language_model=model, speech=speech, voice=voice
+    )
+
+
+@router.get("/v1/cues/{name}.wav")
+async def cue(name: str) -> Response:
+    """A sound cue, for the PC to fetch once and play locally."""
+    if name not in CUE_NAMES:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such cue")
+    return Response(
+        content=cues.wav(name),
+        media_type="audio/wav",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @router.get("/v1/status")
@@ -82,6 +104,8 @@ async def status_(rt: Annotated[Runtime, Depends(admin)]) -> Status:
         unsynced_writes=len(await rt.store.pending_writes()),
         language_model=model,
         language_model_restarts=rt.llm_server.restarts if rt.llm_server else 0,
+        speech=rt.speech_state(),
+        voice=rt.voice_state(),
         degradation_level=rt.manager.level,
     )
 

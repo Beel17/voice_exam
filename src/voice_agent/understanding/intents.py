@@ -1,7 +1,7 @@
 """The closed action list: everything a candidate can ask the exam script to do.
 
 The rules fast path, the language model and the keyboard all produce one ``Intent``. The
-model's output is forced through ``llm_output_schema()`` and then re-validated by
+model's output is forced through ``llm_output_grammar()`` and then re-validated by
 ``parse_llm_output``, so it can only ever name an action the code implements, with
 arguments of the right type. Whether an action is allowed *now* (question exists,
 something is pending confirmation, exam not submitted) is the state machine's job.
@@ -25,13 +25,7 @@ MAX_LLM_OUTPUT_CHARS: Final = 256
 QuestionNumber = Annotated[int, Field(ge=1, le=MAX_QUESTIONS)]
 SectionNumber = Annotated[int, Field(ge=1, le=MAX_SECTIONS)]
 
-_FROZEN = ConfigDict(
-    extra="forbid",
-    frozen=True,
-    # Every field appears in the model's output, even those with defaults, so the
-    # grammar has one fixed shape per action and the small model has nothing to omit.
-    json_schema_serialization_defaults_required=True,
-)
+_FROZEN = ConfigDict(extra="forbid", frozen=True)
 
 
 # --- Arguments --------------------------------------------------------------------------
@@ -353,9 +347,45 @@ def intent_name(intent_type: type[_Action]) -> str:
     return name
 
 
-def llm_output_schema() -> dict[str, Any]:
-    """JSON schema the model's output is constrained to (compiled to a grammar)."""
-    return _intent_adapter.json_schema(mode="serialization")
+# --- The model's output ------------------------------------------------------------------
+#
+# Flat JSON: the action and its arguments side by side, optional arguments left out when
+# empty, e.g. {"action": "go_to", "question": 12} or {"action": "next"}. The service writes
+# the opening itself (LLM_OUTPUT_PREFIX); the model only completes it, under a grammar that
+# allows nothing but the canonical text of a real action. On a CPU every token the model
+# writes costs a full step (about 0.1 s on a laptop), and the grammar's fixed punctuation
+# counts the same as a meaningful token, so the form is kept as short as it can be.
+
+LLM_OUTPUT_PREFIX: Final = '{"action": "'
+
+
+def _args_type(intent_type: type[_Action]) -> type[BaseModel]:
+    args: type[BaseModel] = intent_type.model_fields["args"].annotation  # type: ignore[assignment]
+    return args
+
+
+def llm_output_text(intent: Intent) -> str:
+    """The canonical text of ``intent``: the only form the grammar can produce."""
+    out: dict[str, Any] = {"action": intent.action}
+    out.update({k: v for k, v in intent.args.model_dump().items() if v is not None})
+    return json.dumps(out)
+
+
+def llm_output_grammar() -> str:
+    """GBNF for what the model writes after ``LLM_OUTPUT_PREFIX``: one canonical action."""
+    alternatives = []
+    for t in INTENT_TYPES:
+        parts = [json.dumps(intent_name(t) + '"')]
+        for name, field in _args_type(t).model_fields.items():
+            value = "letter" if name == "choice" else "number"
+            piece = f"{json.dumps(f', "{name}": ')} {value}"
+            parts.append(piece if field.is_required() else f"({piece})?")
+        alternatives.append(f"({' '.join(parts)} {json.dumps('}')})")
+    return (
+        "root ::= " + " | ".join(alternatives) + "\n"
+        'letter ::= "\\"" [A-E] "\\""\n'
+        "number ::= [1-9] [0-9]? [0-9]?\n"
+    )
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -365,19 +395,27 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return obj
 
 
+_BY_NAME: Final[dict[str, type[_Action]]] = {intent_name(t): t for t in INTENT_TYPES}
+
+
 def parse_llm_output(raw: str) -> Action | Unclear | NotAllowed:
     """Validate model output. Anything that is not exactly one valid intent is Unclear."""
     if len(raw) > MAX_LLM_OUTPUT_CHARS:
         return Unclear()
+    raw = raw.strip()
     try:
         data = json.loads(raw, object_pairs_hook=_reject_duplicate_keys)
-        intent = _intent_adapter.validate_python(data, strict=True)
-    except (ValueError, ValidationError):
+        intent_type = _BY_NAME[data.pop("action")]
+        args = _args_type(intent_type).model_validate(data, strict=True)
+        intent = _intent_adapter.validate_python(
+            {"action": intent_name(intent_type), "args": args}, strict=True
+        )
+    except (ValueError, ValidationError, KeyError, TypeError, AttributeError):
         return Unclear()
-    # Accept only the canonical form: no fields filled in from defaults, no coerced values.
-    # The grammar can only emit that form, so anything else means it was not applied, and
-    # guessing what was meant is exactly what must not happen.
-    if intent.model_dump(mode="json") != data:
+    # Accept only the canonical text: no nulls, no coerced values, no other spacing or
+    # order. The grammar can only emit that text, so anything else means it was not
+    # applied, and guessing what was meant is exactly what must not happen.
+    if llm_output_text(intent) != raw:
         return Unclear()
     return intent
 

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Voice Exam</title>
+  <style>
+    :root { --bg: #ffffff; --fg: #111111; --muted: #555555; --accent: #0b57d0; --warn: #b3261e; --panel: #f2f4f7; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #101214; --fg: #f2f2f2; --muted: #a8adb3; --accent: #8ab4f8; --warn: #f2b8b5; --panel: #1b1f24; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font: 18px/1.5 system-ui, sans-serif; }
+    main { max-width: 56rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+    h1 { font-size: 1.3rem; margin: 0 0 1rem; }
+    form { display: grid; gap: .75rem; max-width: 28rem; }
+    label { display: grid; gap: .25rem; font-weight: 600; }
+    input { font: inherit; padding: .5rem .6rem; border: 1px solid var(--muted); border-radius: .4rem; background: var(--bg); color: var(--fg); }
+    button { font: inherit; font-weight: 600; padding: .6rem 1rem; border: 0; border-radius: .4rem; background: var(--accent); color: var(--bg); cursor: pointer; }
+    #status { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; padding: .75rem 1rem; background: var(--panel); border-radius: .5rem; margin-bottom: 1rem; }
+    #status span { white-space: nowrap; }
+    #talk { width: 100%; padding: 1.25rem; font-size: 1.2rem; margin-bottom: 1rem; }
+    #talk[data-on="true"] { background: var(--warn); }
+    #captions { font-size: 1.6rem; line-height: 1.4; min-height: 6em; }
+    #captions p { margin: 0 0 .6rem; }
+    #heard { color: var(--muted); font-style: italic; min-height: 1.5em; }
+    #log { color: var(--muted); font-size: .9rem; }
+    .warn { color: var(--warn); }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+<main>
+  <section id="setup">
+    <h1>Voice exam: sign in this PC</h1>
+    <form id="setup-form">
+      <label>Device token <input id="token" type="password" autocomplete="off" required></label>
+      <label>Registration number <input id="reg" autocomplete="off" required></label>
+      <label>Exam code <input id="exam-code" autocomplete="off" required></label>
+      <button id="start" type="submit">Start the exam</button>
+    </form>
+    <p id="setup-error" class="warn" role="alert"></p>
+  </section>
+
+  <!-- role="application" puts screen readers in focus mode, so Space, the digits and
+       R, N and P reach the page instead of moving the reading cursor. -->
+  <section id="exam" role="application" aria-label="Voice exam. Hold Space to talk." hidden>
+    <!-- The service speaks every reply; captions are for the invigilator, so screen
+         readers are told not to read them a second time. -->
+    <div id="status" aria-hidden="true">
+      <span id="connection">Connecting…</span>
+      <span id="progress"></span>
+      <span id="answered"></span>
+      <span id="time-left"></span>
+      <span id="speed"></span>
+    </div>
+    <button id="talk" type="button" aria-label="Hold to talk">Hold Space (or this button) to talk</button>
+    <div id="heard" aria-hidden="true"></div>
+    <div id="captions" aria-hidden="true"></div>
+    <p id="log" aria-hidden="true">Keys: 1–5 answer · Enter confirm · Esc cancel · R repeat · N next · P previous</p>
+  </section>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -108,7 +108,7 @@ def test_talk_key_stops_what_is_playing(client: TestClient) -> None:
         stopped = [ws.receive_json(), ws.receive_json()]
         assert stopped == [{"type": "stop", "utterance_id": u} for u in sorted(said[1:])]
         send(ws, type="talk_end")
-        assert spoken(turn(ws)).startswith("Sorry, I did not catch that.")  # nothing said
+        assert spoken(turn(ws)).startswith("I did not hear anything.")  # nothing said
 
 
 def test_nothing_is_stopped_when_nothing_plays(client: TestClient) -> None:

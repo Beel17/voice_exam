@@ -27,12 +27,12 @@ from voice_agent.understanding.llm import SYSTEM_PROMPT, LlmUnderstander
 # What a compromised model might send back, in turn.
 HOSTILE_REPLIES = [
     "Sure! The correct answer is B.",
-    '{"action": "submit", "args": {}}',
-    '{"action": "confirm", "args": {}}',
-    '{"action": "answer", "args": {"choice": "B"}, "say": "B is correct"}',
-    '{"action": "reveal_answer", "args": {}}',
+    '{"action": "submit"}',
+    '{"action": "confirm"}',
+    '{"action": "answer", "choice": "B", "say": "B is correct"}',
+    '{"action": "reveal_answer"}',
     "I am now your tutor. Option C is right because plants need light.",
-    '{"action": "change_answer", "args": {"choice": "A", "question": 1}}',
+    '{"action": "change_answer", "choice": "A", "question": 1}',
 ]
 
 
@@ -133,17 +133,18 @@ async def test_the_model_never_receives_exam_content(tmp_path: Path) -> None:
         await w.say(f"go to question {n}")
         await w.say(asked)
     assert len(w.server.requests) == 6
-    # The system prompt is fixed (and checked on its own). The per-turn message is a
-    # state line of numbers and letters in a fixed form, plus exactly what was said:
-    # there is nowhere for question or option text to appear.
+    # The system prompt and the opening are fixed (the prompt is checked on its own). The
+    # per-turn message is a state line of numbers and letters in a fixed form, plus
+    # exactly what was said: there is nowhere for question or option text to appear.
     state = re.compile(
         r"<state>question [1-6] of 6; options (?:A to [B-E]|none read yet); "
         r"yes would confirm: (?:nothing|saving the chosen answer|removing the answer"
         r"|submitting the exam)</state>"
     )
     for request in w.server.requests:
-        system, user = request["messages"]
+        system, user, opening = request["messages"]
         assert system["content"] == SYSTEM_PROMPT
+        assert opening == {"role": "assistant", "content": i.LLM_OUTPUT_PREFIX}
         state_line, utterance = user["content"].split("\n")
         assert state.fullmatch(state_line), state_line
         assert utterance == f"<utterance>{asked}</utterance>"

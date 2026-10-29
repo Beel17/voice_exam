@@ -78,6 +78,17 @@ class OneMoment:
 
 
 @dataclass(frozen=True, slots=True)
+class StillThinking:
+    """The language model is taking longer than a second: the candidate is not left in
+    silence wondering whether they were heard."""
+
+
+@dataclass(frozen=True, slots=True)
+class NothingHeard:
+    """The talk key was held, but recognition found no words."""
+
+
+@dataclass(frozen=True, slots=True)
 class KeyboardMode:
     pass
 
@@ -310,6 +321,8 @@ TemplateReply = (
     | KeyboardMode
     | VoiceBack
     | OneMoment
+    | StillThinking
+    | NothingHeard
     | NotRegistered
     | PlatformUnavailable
     | Welcome
@@ -515,6 +528,12 @@ def _render_template(reply: TemplateReply) -> Spoken:
             )
         case OneMoment():
             return Spoken("One moment, please. Then say that again, or use the keyboard.", "prompt")
+        case StillThinking():
+            return Spoken("One moment.", "prompt")
+        case NothingHeard():
+            return Spoken(
+                "I did not hear anything. Hold Space while you speak, then let go.", "prompt"
+            )
         case KeyboardMode():
             return Spoken(
                 "Voice is not available for a moment. Please use the keyboard: number keys "
@@ -614,7 +633,10 @@ def _render_template(reply: TemplateReply) -> Spoken:
         case TimeWarning(minutes=minutes):
             return Spoken(f"{_plural(minutes, 'minute')} left.", "prompt")
         case CountAnswered(answered=answered, of=of):
-            return Spoken(f"You have answered {answered} of {_plural(of, 'question')}.", "prompt")
+            text = f"You have answered {answered} of {_plural(of, 'question')}."
+            if answered < of:  # "how many are left" is the usual way to ask
+                text += f" {of - answered} {'is' if of - answered == 1 else 'are'} left."
+            return Spoken(text, "prompt")
         case Unanswered(questions=()):
             return Spoken("You have answered every question.", "prompt")
         case Unanswered(questions=qs):

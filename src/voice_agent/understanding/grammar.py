@@ -129,6 +129,9 @@ _BEFORE_A_NUMBER: Final = frozenset(
 _LETTER_WORDS: Final[dict[str, OptionLetter]] = {
     "a": "A", "ay": "A", "b": "B", "be": "B", "bee": "B", "c": "C", "see": "C", "sea": "C",
     "cee": "C", "d": "D", "dee": "D", "e": "E", "ee": "E",
+    # Heard for "E" by the recogniser (phase 2 measurement); only ever a whole sentence or
+    # after "option", so the pronoun is never mistaken for a letter mid-sentence.
+    "he": "E",
 }  # fmt: skip
 _ORDINALS: Final[dict[str, int]] = {
     "first": 1, "1st": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3,
@@ -339,7 +342,12 @@ _RULES: Final[list[_Rule]] = [
     *_rules(
         i.CountAnswered(),
         r"how many (?:questions )?(?:have i|did i) (?:answered|answer|done)"
-        r"|how many (?:questions )?(?:are|have been) answered|how many have i done",
+        r"|how many (?:questions )?(?:are|have been) answered|how many have i done"
+        # Asked by a tester as "how many more questions do I have", "how many questions
+        # are remaining": the reply gives both counts.
+        r"|how many (?:more )?(?:questions )?(?:do i have|have i got|are there)(?: left)?"
+        r"|how many (?:more )?(?:questions )?(?:are |is )?(?:left|remaining|remain"
+        r"|unanswered|not answered|outstanding)",
     ),
     *_rules(
         i.ListUnanswered(),
@@ -392,7 +400,10 @@ _RULES: Final[list[_Rule]] = [
         r"submit|submit (?:my |the )?(?:exam|test|answers|paper)"
         r"|i am (?:done|finished|through)(?: with the (?:exam|test))?"
         r"|i have (?:finished|completed)(?: (?:the|my) (?:exam|test))?(?: i want to submit)?"
-        r"|finish(?: the| my)? (?:exam|test)|end(?: the| my)? (?:exam|test)",
+        r"|finish(?: the| my)? (?:exam|test)|(?:end|and)(?: the| my)? (?:exam|test)"
+        # "end the exam, I am done". "and the exam" is how the recogniser hears "end the
+        # exam" in some accents; submitting asks twice, so a mishearing costs a "no".
+        r"|(?:end|and|finish)(?: the| my)? (?:exam|test) i am (?:done|finished|through)",
     ),
     *_rules(
         i.Help(),
@@ -433,6 +444,12 @@ _NO_CONTEXT: Final = RulesContext()
 _ONE_THAT_SAYS: Final = re.compile(
     r"(?:the )?(?:one|option|answer) (?:that says|that reads|with|saying|which says) (?P<t>.+)"
 )
+# Words that say nothing about which option is meant, even if one option happens to
+# contain them.
+_OPTION_STOPWORDS: Final = frozenset(
+    {"option", "options", "answer", "question", "choice", "letter", "number", "that", "this",
+     "these", "those", "what", "which", "with", "from", "they", "them", "there", "have"}
+)  # fmt: skip
 _CHOOSING: Final = re.compile(
     r"(?:i choose|i pick|i will go with|i go with|choose|pick|my answer is|the answer is)"
     r" (?P<t>.+)"
@@ -454,7 +471,10 @@ def names_option(text: str, choice: OptionLetter, option_count: int | None) -> b
     question, so a letter it picked would be a guess the candidate might take for a hint.
     """
     position = OPTION_LETTERS.index(choice) + 1
-    for word in normalise(text).split():
+    words = normalise(text).split()
+    for word in words:
+        if word == "he" and len(words) > 1:
+            continue  # the pronoun, not a misheard "E"
         if _LETTER_WORDS.get(word) == choice or _ORDINALS.get(word) == position:
             return True
         if word == str(position) or (word in ("last", "final") and position == option_count):
@@ -466,6 +486,10 @@ def match(text: str, ctx: RulesContext = _NO_CONTEXT) -> i.Intent | None:
     """The intent for ``text``, or None if the rules do not recognise it."""
     if len(text) > MAX_RULE_CHARS:
         return None
+    if "{" in text or "}" in text:
+        # Shaped like the model's output: speech never has braces, and a candidate has no
+        # reason to type them. Refused before normalising strips them out.
+        return i.NotAllowed()
     said = normalise(text)
     if not said:
         return None
@@ -482,21 +506,22 @@ def match(text: str, ctx: RulesContext = _NO_CONTEXT) -> i.Intent | None:
 
 
 def _match_option_text(said: str, ctx: RulesContext) -> i.Intent | None:
-    """Choose an option by saying its text, exactly ("photosynthesis"), after a choosing
-    phrase ("I'll go with photosynthesis"), or as a distinctive whole-word part of it after
-    "the one that says ..."."""
+    """Choose an option by saying its text: exactly ("photosynthesis"), or a distinctive
+    whole-word part of it ("succeeded" for "The plan succeeded"), alone, after a choosing
+    phrase ("I'll go with photosynthesis") or after "the one that says ..."."""
     if not ctx.option_texts:
         return None
     options = [{normalise(t) for t in texts} for texts in ctx.option_texts]
-    hits = [k for k, texts in enumerate(options) if said in texts]
-    if not hits and (m := _CHOOSING.fullmatch(said)) is not None:
-        hits = [k for k, texts in enumerate(options) if m["t"] in texts]
-    if not hits and (m := _ONE_THAT_SAYS.fullmatch(said)) is not None:
-        phrase = m["t"]
-        hits = [k for k, texts in enumerate(options) if phrase in texts]
-        if not hits and len(phrase) >= 4:
-            word = re.compile(rf"\b{re.escape(phrase)}\b")
-            hits = [k for k, texts in enumerate(options) if any(word.search(t) for t in texts)]
+    phrase = said
+    if not any(said in texts for texts in options):  # an option may itself say "choose..."
+        for pattern in (_CHOOSING, _ONE_THAT_SAYS):
+            if (m := pattern.fullmatch(said)) is not None:
+                phrase = m["t"]
+    hits = [k for k, texts in enumerate(options) if phrase in texts]
+    if not hits and len(phrase) >= 4 and phrase not in _OPTION_STOPWORDS:
+        word = re.compile(rf"\b{re.escape(phrase)}\b")
+        hits = [k for k, texts in enumerate(options) if any(word.search(t) for t in texts)]
+    # A part shared by two options names neither; the answer is still confirmed after.
     if len(hits) != 1:
         return None
     return i.Answer(args=i.ChoiceArgs(choice=OPTION_LETTERS[hits[0]]))

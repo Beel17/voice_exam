@@ -302,3 +302,58 @@ def test_model_answers_must_be_named_in_the_sentence(
     text: str, choice: str, count: int, named: bool
 ) -> None:
     assert names_option(text, choice, count) is named  # type: ignore[arg-type]
+
+
+def test_he_is_heard_as_e_only_on_its_own() -> None:
+    # The recogniser hears a lone "E" as "He"; inside a sentence it is just the pronoun.
+    assert match("He.", Q50) == answer("E")
+    assert match("option he", Q50) == answer("E")
+    assert names_option("he", "E", 5)
+    assert not names_option("he said B", "E", 5)
+
+
+# --- From the first tester's session ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "How many more questions do I have",
+        "How many questions are remaining?",
+        "how many questions are unanswered",
+        "how many are left",
+        "how many questions remain",
+    ],
+)
+def test_asking_how_many_are_left(text: str) -> None:
+    assert match(text) == i.CountAnswered()
+
+
+@pytest.mark.parametrize(
+    "text", ["end the exam", "And the exam", "And the exam I am done", "end the exam, I'm done"]
+)
+def test_ending_the_exam_as_heard(text: str) -> None:
+    # "and the exam" is how the recogniser heard "end the exam"; submitting asks twice.
+    assert match(text) == i.Submit()
+
+
+Q6 = ctx_for(6)  # the plan succeeded / was postponed / was approved / failed
+
+
+@pytest.mark.parametrize(
+    ("text", "letter"),
+    [
+        ("succeeded", "A"),
+        ("postponed", "B"),
+        ("I will go with failed", "D"),
+        ("the one that says approved", "C"),
+        ("was approved", "C"),
+    ],
+)
+def test_a_word_only_one_option_has_chooses_it(text: str, letter: str) -> None:
+    assert match(text, Q6) == answer(letter)
+
+
+@pytest.mark.parametrize("text", ["plan", "the plan", "the plan was", "option", "is it failed"])
+def test_words_that_do_not_pick_out_one_option_choose_nothing(text: str) -> None:
+    assert match(text, Q6) is None

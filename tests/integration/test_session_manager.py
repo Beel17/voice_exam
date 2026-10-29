@@ -14,8 +14,8 @@ from voice_agent.adapters.base import (
     RejectReason,
 )
 from voice_agent.adapters.fake_adapter import FakeAdapter, load_fixture
-from voice_agent.contract import Say, State
-from voice_agent.runtime.degrade import Level
+from voice_agent.contract import Cue, Say, State
+from voice_agent.runtime.degrade import Level, Load, level_for
 from voice_agent.session import machine as m
 from voice_agent.session.events import SessionStore
 from voice_agent.session.manager import LiveSession, NotFound, SessionManager
@@ -593,3 +593,86 @@ async def test_finished_exams_hear_no_announcements(h: Harness) -> None:
     s.drain()
     h.manager.set_level(Level.KEYBOARD)
     assert said(s) == ""
+
+
+# --- Sound cues -------------------------------------------------------------------------
+
+
+def cues(s: LiveSession) -> list[Cue]:
+    return [m for m in s.drain() if isinstance(m, Cue)]
+
+
+async def test_saves_sound_a_cue_and_stop_being_spoken_after_twice(h: Harness) -> None:
+    s = await h.login()
+    heard_saved = []
+    for n in (1, 2, 3, 4):
+        await h.say(s, i.GoTo(args=i.QuestionArgs(question=n)))
+        await h.say(s, i.Answer(args=i.ChoiceArgs(choice="A")))
+        await h.manager.handle(s, i.Confirm(), m.Source.RULES)
+        messages = s.drain()
+        assert Cue(name="saved", volume=0.75) in messages
+        heard_saved.append(any(isinstance(x, Say) and x.text == "Saved." for x in messages))
+    assert heard_saved == [True, True, False, False]
+
+
+async def test_not_understood_and_time_warnings_sound_a_cue_and_still_speak(h: Harness) -> None:
+    s = await h.login()
+    await h.manager.handle_text(s, "blah blah")
+    messages = s.drain()
+    assert Cue(name="not_understood", volume=0.75) in messages
+    assert any(isinstance(x, Say) and x.text.startswith("Sorry") for x in messages)
+    h.clock.now += 3600 - 600
+    await h.manager.check_time()
+    messages = s.drain()
+    assert Cue(name="time_warning", volume=0.75) in messages
+    assert any(isinstance(x, Say) and x.text == "15 minutes left." for x in messages)
+
+
+async def test_cues_follow_the_candidates_volume(h: Harness) -> None:
+    s = await h.login()
+    await h.say(s, i.QuieterCues())
+    await h.say(s, i.QuieterCues())
+    await h.manager.handle_text(s, "blah blah")
+    assert cues(s) == [Cue(name="not_understood", volume=0.25)]
+
+
+class SlowModel(ScriptedModel):
+    def __init__(self, answers: dict[str, i.Intent | LlmFallback], seconds: float) -> None:
+        super().__init__(answers)
+        self.seconds = seconds
+
+    async def understand(self, session_id: str, text: str, ctx: LlmContext) -> i.Intent:
+        await asyncio.sleep(self.seconds)
+        return await super().understand(session_id, text, ctx)
+
+
+async def test_a_slow_model_is_covered_by_one_moment(h: Harness) -> None:
+    s = await with_model(h, SlowModel({"read it once more": i.RepeatQuestion()}, 1.3))
+    await h.manager.handle_text(s, "read it once more")
+    messages = [x.text for x in s.drain() if isinstance(x, Say)]
+    assert messages[0] == "One moment."  # said while the model was still working
+    assert messages[1].startswith("Question 50 of 60.")
+
+
+async def test_a_quick_model_needs_no_one_moment(h: Harness) -> None:
+    s = await with_model(h, SlowModel({"read it once more": i.RepeatQuestion()}, 0.0))
+    await h.manager.handle_text(s, "read it once more")
+    assert "One moment." not in said(s)
+
+
+async def test_nothing_heard_is_said_so_and_is_not_a_misunderstanding(h: Harness) -> None:
+    s = await h.login()
+    s.drain()
+    for _ in range(3):
+        await h.manager.handle_text(s, "", confidence=0.0)
+        assert said(s) == "I did not hear anything. Hold Space while you speak, then let go."
+    assert s.state.unclear_streak == 0
+    assert all(not isinstance(e.event, m.Understood) for e in await h.store.load(s.session_id))
+
+
+async def test_one_timeout_does_not_switch_the_model_off(h: Harness) -> None:
+    model = ScriptedModel({"read it once more": LlmFallback("timeout")})
+    s = await with_model(h, model)
+    await h.manager.handle_text(s, "read it once more")
+    assert h.manager.recent_model_refusals() == 1
+    assert level_for(Load(True, h.manager.recent_model_refusals())) is Level.NORMAL

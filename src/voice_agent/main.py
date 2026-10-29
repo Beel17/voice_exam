@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import mimetypes
 import shutil
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -10,6 +11,8 @@ from pathlib import Path
 from typing import Final
 
 from fastapi import FastAPI, WebSocket
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from voice_agent import selfcheck
 from voice_agent.adapters.base import ExamDataAdapter
@@ -20,7 +23,8 @@ from voice_agent.config import Settings
 from voice_agent.runtime.degrade import Degrader, Load
 from voice_agent.session.events import SessionStore
 from voice_agent.session.manager import SessionManager
-from voice_agent.speech.stt import Recognizer
+from voice_agent.speech.stt import MODEL_FILES, Recognizer, SherpaRecognizer
+from voice_agent.speech.tts import SherpaSynthesizer, Synthesizer
 from voice_agent.understanding.llm import LlamaServer, LlmUnderstander, llama_server_command
 
 log = logging.getLogger(__name__)
@@ -31,6 +35,7 @@ OUTBOX_EVERY_S: Final = 5.0
 TIME_EVERY_S: Final = 30.0
 MODEL_CHECK_EVERY_S: Final = 5.0
 LOAD_CHECK_EVERY_S: Final = 1.0
+CLIENT_DIR: Final = Path(__file__).parent / "client"
 
 
 def create_app(
@@ -38,11 +43,14 @@ def create_app(
     *,
     adapter: ExamDataAdapter | None = None,
     recognizer: Recognizer | None = None,
+    synthesizer: Synthesizer | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         store = await SessionStore.open(settings.data_dir / "sessions.db")
         llm_server, understander = await _start_language_model(settings)
+        owned_recognizer = None if recognizer else await _start_recognizer(settings)
+        owned_synthesizer = None if synthesizer else await _start_synthesizer(settings)
         manager = SessionManager(
             store,
             adapter or _adapter(settings),
@@ -51,7 +59,15 @@ def create_app(
             max_utterance_chars=settings.limits.max_utterance_chars,
             understander=understander,
         )
-        runtime = Runtime(settings, store, manager, ws.Hub(), llm_server, recognizer)
+        runtime = Runtime(
+            settings,
+            store,
+            manager,
+            ws.Hub(),
+            llm_server,
+            recognizer or owned_recognizer,
+            synthesizer or owned_synthesizer,
+        )
         app.state.runtime = runtime
         watch_load = _watch_load(runtime, Degrader())
         await watch_load()  # the level is right from the first connection
@@ -76,11 +92,24 @@ def create_app(
                 await understander.aclose()
             if llm_server is not None:
                 await llm_server.stop()
+            if owned_recognizer is not None:
+                await owned_recognizer.stop()
+            if owned_synthesizer is not None:
+                await owned_synthesizer.stop()
             await store.close()
 
     # No interactive docs: they load assets from the internet, and the service is offline.
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.include_router(http.router)
+    # The voice client for the exam PC, served by the service itself for testing until the
+    # centres' secure browser is known. Windows can map .js to text/plain from its registry,
+    # and browsers refuse to run a module served that way.
+    mimetypes.add_type("text/javascript", ".js")
+    app.mount("/client", StaticFiles(directory=CLIENT_DIR, html=True), name="client")
+
+    @app.get("/", include_in_schema=False)
+    async def home() -> RedirectResponse:
+        return RedirectResponse("/client/")
 
     @app.websocket("/v1/session")
     async def session(websocket: WebSocket) -> None:
@@ -92,6 +121,7 @@ def create_app(
             rt.settings.device_token_sha256,
             rt.settings.limits.max_messages_per_10s,
             rt.recognizer,
+            rt.synthesizer,
         )
 
     return app
@@ -103,6 +133,62 @@ def _adapter(settings: Settings) -> ExamDataAdapter:
             return FakeAdapter.with_bundled_fixtures(
                 load_candidates=settings.adapter.load_candidates
             )
+
+
+async def _start_recognizer(settings: Settings) -> SherpaRecognizer | None:
+    """Verify, load and warm the recogniser. If that fails, speech is down and the service
+    runs in keyboard mode; the exam itself never depends on speech."""
+    cfg = settings.speech
+    if not cfg.enabled:
+        return None
+    files = [cfg.recognizer_dir / name for name in MODEL_FILES]
+    problems = await asyncio.to_thread(selfcheck.file_problems, settings.models_dir, files)
+    if problems:
+        for problem in problems:
+            log.error("speech check failed: %s", problem)
+        log.error("speech recognition not available; keyboard only")
+        return None
+    recognizer = SherpaRecognizer(
+        cfg.recognizer_dir,
+        workers=cfg.recognition_workers,
+        max_queue=cfg.recognition_queue,
+        start_within_s=cfg.recognition_start_within_s,
+    )
+    try:
+        await recognizer.start()
+    except Exception:
+        log.exception("speech recognition failed to start; keyboard only")
+        await recognizer.stop()
+        return None
+    return recognizer
+
+
+async def _start_synthesizer(settings: Settings) -> SherpaSynthesizer | None:
+    """Verify, load and warm the voice, rendering the fixed prompts. If that fails, speech
+    is down; the exam text still reaches the PC for its screen reader or braille display."""
+    cfg = settings.speech
+    if not cfg.enabled:
+        return None
+    files = sorted(p for p in cfg.voice_dir.rglob("*") if p.is_file())
+    problems = await asyncio.to_thread(selfcheck.file_problems, settings.models_dir, files)
+    if not files or problems:
+        for problem in problems or [f"{cfg.voice_dir} has no voice files"]:
+            log.error("voice check failed: %s", problem)
+        return None
+    synthesizer = SherpaSynthesizer(
+        cfg.voice_dir,
+        workers=cfg.synthesis_workers,
+        max_queue=cfg.synthesis_queue,
+        start_within_s=cfg.synthesis_start_within_s,
+    )
+    try:
+        await synthesizer.start()
+    except Exception:
+        log.exception("speech synthesis failed to start")
+        await synthesizer.stop()
+        return None
+    log.info("voice: %s", cfg.voice_dir.name)
+    return synthesizer
 
 
 async def _start_language_model(
@@ -135,7 +221,7 @@ async def _start_language_model(
         Path(binary),
         cfg.model_file,
         port=cfg.port,
-        threads=cfg.threads,
+        threads=settings.llm_threads,
         slots=cfg.slots,
         context_per_slot=cfg.context_per_slot,
     )
@@ -157,9 +243,16 @@ async def _start_language_model(
 
 def _watch_load(runtime: Runtime, degrader: Degrader) -> Work:
     async def check() -> None:
+        recognition = runtime.recognition_stats()
+        synthesis = runtime.synthesis_stats()
         load = Load(
             language_model_up=runtime.language_model_state() == "running",
             language_model_refusals=runtime.manager.recent_model_refusals(),
+            speech_up=runtime.speech_state() != "down",
+            recognition_queued=recognition.queued if recognition else 0,
+            recognition_workers=recognition.workers if recognition else 1,
+            synthesis_queued=synthesis.queued if synthesis else 0,
+            synthesis_workers=synthesis.workers if synthesis else 1,
         )
         level = degrader.update(load)
         if level != runtime.manager.level:

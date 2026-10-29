@@ -81,12 +81,16 @@ class WorkerPool[S]:
         self._mean_job_s = 0.0
 
     async def start(self) -> None:
-        """Start the workers, loading each one's engine on its own thread."""
+        """Start the workers, loading each one's engine on its own thread, all at once:
+        loading a speech model takes seconds, and workers should not wait in line."""
         loop = asyncio.get_running_loop()
-        for k in range(self._size):
-            thread = ThreadPoolExecutor(1, thread_name_prefix=f"{self.name}-{k}")
-            state = await loop.run_in_executor(thread, self._make_state)
-            self._threads.append(thread)
+        self._threads = [
+            ThreadPoolExecutor(1, thread_name_prefix=f"{self.name}-{k}") for k in range(self._size)
+        ]
+        states = await asyncio.gather(
+            *(loop.run_in_executor(thread, self._make_state) for thread in self._threads)
+        )
+        for thread, state in zip(self._threads, states, strict=True):
             self._tasks.append(asyncio.create_task(self._work(thread, state)))
 
     async def stop(self) -> None:

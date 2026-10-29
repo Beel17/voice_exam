@@ -29,8 +29,10 @@ SPEEDS: Final = (0.8, 1.0, 1.5, 2.0, 2.5)
 NORMAL_SPEED: Final = 1
 CUE_VOLUMES: Final = (0.25, 0.5, 0.75, 1.0)
 DEFAULT_CUES: Final = 2
-# Consecutive misunderstandings before the keyboard is offered.
+# Consecutive misunderstandings before the keyboard is offered, and how many more before
+# it is offered again: said on every miss, it turns each "sorry" into a long speech.
 UNCLEAR_BEFORE_KEYBOARD: Final = 2
+UNCLEAR_BETWEEN_KEYBOARD_OFFERS: Final = 5
 
 
 class Phase(StrEnum):
@@ -87,6 +89,8 @@ class Understood(_Event):
     source: Source
     # For the audit trail and analytics; the machine never reads these.
     text: str | None = None
+    # How sure recognition was, for spoken input (typed input is certain).
+    confidence: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
     latency_ms: Annotated[int, Field(ge=0)] | None = None
     # Why the model's understanding was not used for a sentence the rules did not know.
     fallback: Fallback | None = None
@@ -525,7 +529,8 @@ def _listen(state: SessionState, intent: i.Intent) -> Step:
         case i.Help():
             return state, _say(r.Help())
         case i.Unclear():
-            offer = state.unclear_streak >= UNCLEAR_BEFORE_KEYBOARD
+            since = state.unclear_streak - UNCLEAR_BEFORE_KEYBOARD
+            offer = since >= 0 and since % UNCLEAR_BETWEEN_KEYBOARD_OFFERS == 0
             return state, _say(r.NotUnderstood(offer))
         case i.NotAllowed():
             return state, _say(r.OutOfScope())

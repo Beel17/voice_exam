@@ -40,6 +40,10 @@ class Load:
 # every queued job is a candidate who has stopped talking and is waiting.
 RECOGNITION_BACKLOG = 2
 SYNTHESIS_BACKLOG = 3
+# Model calls refused as busy or too slow within the recent window before every sentence
+# goes to rules only. One slow answer is not a shortage of capacity: on a PC, a single
+# timeout used to switch the model off for every sentence of the next 45 seconds.
+MODEL_REFUSALS = 3
 
 
 def level_for(load: Load) -> Level:
@@ -50,7 +54,7 @@ def level_for(load: Load) -> Level:
         return Level.KEYBOARD
     if load.synthesis_queued > SYNTHESIS_BACKLOG * load.synthesis_workers:
         return Level.FIXED_PROMPTS
-    if not load.language_model_up or load.language_model_refusals > 0:
+    if not load.language_model_up or load.language_model_refusals >= MODEL_REFUSALS:
         return Level.RULES_ONLY
     return Level.NORMAL
 

@@ -17,15 +17,20 @@ from dataclasses import dataclass, field
 from typing import Final
 
 from voice_agent.adapters.base import AdapterError, AdapterUnavailable, ExamDataAdapter, Question
-from voice_agent.contract import Key, Say, ServerMessage
+from voice_agent.contract import Cue, CueName, Key, Say, ServerMessage
 from voice_agent.runtime.degrade import Level
 from voice_agent.session import machine as m
 from voice_agent.session.events import SessionRecord, SessionStore
 from voice_agent.session.outbox import deliver, items_for
 from voice_agent.session.replies import (
     KeyboardMode,
+    NothingHeard,
+    NotUnderstood,
     QuestionNotAvailable,
     Reply,
+    Saved,
+    StillThinking,
+    TimeWarning,
     VoiceBack,
     needs_question,
     render,
@@ -38,6 +43,19 @@ from voice_agent.understanding.llm import LlmContext, LlmFallback, Understander
 # Enough for any one turn; a client that stops reading loses the oldest messages, never
 # blocks the session.
 OUTPUT_QUEUE_SIZE: Final = 256
+# "Saved." is spoken this many times alongside its cue, then the cue alone carries it.
+SPOKEN_SAVES: Final = 2
+# How long the model may think before the candidate hears "one moment".
+STILL_THINKING_AFTER_S: Final = 1.0
+
+
+# Replies that come with a sound cue. Saves become the cue alone after a while; the
+# others still speak, since they carry information the cue cannot.
+_CUES: Final[dict[type, CueName]] = {
+    Saved: "saved",
+    NotUnderstood: "not_understood",
+    TimeWarning: "time_warning",
+}
 
 
 class NotFound(Exception):
@@ -56,6 +74,8 @@ class LiveSession:
     warned: set[int] = field(default_factory=set)
     # False only for a session this login has just created.
     resumed: bool = False
+    # How many times "Saved." has been spoken; after SPOKEN_SAVES, the cue says it alone.
+    spoken_saves: int = 0
 
     @property
     def session_id(self) -> str:
@@ -125,12 +145,17 @@ class SessionManager:
         if (previous >= Level.KEYBOARD) == (level >= Level.KEYBOARD):
             return
         reply: Reply = KeyboardMode() if level >= Level.KEYBOARD else VoiceBack()
-        self._announcements += 1
         for session in self._live.values():
             if session.state.phase is not m.Phase.ENDED:
-                for n, spoken in enumerate(render(reply)):
-                    utterance_id = f"sys{self._announcements}.{n}"
-                    session.emit(Say(utterance_id=utterance_id, text=spoken.text, kind=spoken.kind))
+                self._aside(session, reply)
+
+    def _aside(self, session: LiveSession, reply: Reply) -> None:
+        """Say something about the service rather than the exam: not part of the script,
+        so not in the event log."""
+        self._announcements += 1
+        for n, spoken in enumerate(render(reply)):
+            utterance_id = f"sys{self._announcements}.{n}"
+            session.emit(Say(utterance_id=utterance_id, text=spoken.text, kind=spoken.kind))
 
     # --- Starting and resuming --------------------------------------------------------
 
@@ -214,15 +239,28 @@ class SessionManager:
 
     # --- Candidate input --------------------------------------------------------------
 
-    async def handle_text(self, session: LiveSession, text: str) -> None:
+    async def handle_text(
+        self, session: LiveSession, text: str, confidence: float | None = None
+    ) -> None:
         """A sentence the candidate typed or said: rules first, then the language model."""
         text = " ".join(text.split())
         async with session.lock:
+            if not text and confidence is not None:
+                # The talk key was held but no words were found: not a misunderstanding,
+                # so the exam script does not count it as one.
+                self._aside(session, NothingHeard())
+                return
             began = time.perf_counter()
             intent, source, fallback = await self._understand(session, text)
             latency_ms = round((time.perf_counter() - began) * 1000)
             await self._understood(
-                session, intent, source, text, latency_ms=latency_ms, fallback=fallback
+                session,
+                intent,
+                source,
+                text,
+                confidence=confidence,
+                latency_ms=latency_ms,
+                fallback=fallback,
             )
 
     async def _understand(
@@ -236,10 +274,17 @@ class SessionManager:
             return i.Unclear(), m.Source.RULES, "disabled"
         if self._level >= Level.RULES_ONLY:
             return i.Unclear(), m.Source.RULES, "degraded"
+        call = asyncio.ensure_future(
+            self._understander.understand(session.session_id, text, self._llm_context(session))
+        )
         try:
-            intent = await self._understander.understand(
-                session.session_id, text, self._llm_context(session)
-            )
+            done, _ = await asyncio.wait({call}, timeout=STILL_THINKING_AFTER_S)
+            if not done:
+                self._aside(session, StillThinking())
+            intent = await call
+        except asyncio.CancelledError:
+            call.cancel()
+            raise
         except LlmFallback as e:
             if e.reason in ("busy", "timeout"):  # the model is short of capacity
                 self._model_refusals.append(time.monotonic())
@@ -273,13 +318,19 @@ class SessionManager:
         source: m.Source,
         text: str | None,
         *,
+        confidence: float | None = None,
         latency_ms: int | None = None,
         fallback: m.Fallback | None = None,
     ) -> None:
         if text is not None:
             text = text[: self._max_utterance_chars]  # the audit log keeps what was used
         event = m.Understood(
-            intent=intent, source=source, text=text, latency_ms=latency_ms, fallback=fallback
+            intent=intent,
+            source=source,
+            text=text,
+            confidence=confidence,
+            latency_ms=latency_ms,
+            fallback=fallback,
         )
         await self._feed(session, event)
         self._emit_state(session)
@@ -381,6 +432,13 @@ class SessionManager:
             await self._feed(session, outcome)
 
     async def _speak(self, session: LiveSession, reply: Reply, utterance_id: str) -> None:
+        if (cue := _CUES.get(type(reply))) is not None:
+            session.emit(Cue(name=cue, volume=session.state.cue_volume))
+        if isinstance(reply, Saved) and reply.choice is not None:
+            # Routine saves become the cue alone once the candidate has heard what it means.
+            session.spoken_saves += 1
+            if session.spoken_saves > SPOKEN_SAVES:
+                return
         question = None
         if (n := needs_question(reply)) is not None:
             question = await self._question(session.record.exam_id, n)

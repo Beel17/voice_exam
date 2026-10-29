@@ -1,0 +1,4 @@
+{
+  "//": "Marks the client as ES modules for node --test; browsers ignore this file.",
+  "type": "module"
+}

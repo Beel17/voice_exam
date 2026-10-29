@@ -25,9 +25,15 @@ AUDIO_BYTES_PER_SECOND = AUDIO_SAMPLE_RATE * 2
 MAX_AUDIO_FRAME_BYTES = AUDIO_BYTES_PER_SECOND // 5
 MAX_UTTERANCE_SECONDS = 30
 
+# Audio down: each ``say`` is followed by its speech as 22.05 kHz mono 16-bit PCM frames of
+# 200 ms, then ``audio_end``; the PC reports ``playback_done`` once it has played them.
+AUDIO_OUT_SAMPLE_RATE = 22_050
+AUDIO_OUT_FRAME_BYTES = AUDIO_OUT_SAMPLE_RATE * 2 // 5
+
 OptionLetter = Literal["A", "B", "C", "D", "E"]
 Key = Literal["1", "2", "3", "4", "5", "R", "N", "P", "Enter", "Esc"]
 SayKind = Literal["question", "options", "prompt", "confirm"]
+CueName = Literal["listening", "saved", "not_understood", "time_warning"]
 
 Identifier = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9._:/-]{1,64}$")]
 
@@ -132,6 +138,22 @@ class Stop(_Message):
     utterance_id: Identifier
 
 
+class AudioEnd(_Message):
+    """All of a ``say``'s audio frames have been sent."""
+
+    type: Literal["audio_end"] = "audio_end"
+    utterance_id: Identifier
+
+
+class Cue(_Message):
+    """Play a sound cue (fetched once from ``/v1/cues/{name}.wav``) at this volume.
+    "listening" is never sent: the PC plays it itself the moment the talk key goes down."""
+
+    type: Literal["cue"] = "cue"
+    name: CueName
+    volume: Annotated[float, Field(ge=0.0, le=1.0)]
+
+
 class Heard(_Message):
     """What was recognised, for the on-screen log and audit."""
 
@@ -191,7 +213,7 @@ class Error(_Message):
 
 
 ServerMessage = Annotated[
-    SessionInfo | Say | Stop | Heard | State | Pong | Error,
+    SessionInfo | Say | Stop | AudioEnd | Cue | Heard | State | Pong | Error,
     Field(discriminator="type"),
 ]
 

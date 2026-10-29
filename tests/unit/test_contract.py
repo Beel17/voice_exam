@@ -6,7 +6,9 @@ from voice_agent.contract import (
     MAX_FRAME_BYTES,
     MAX_TEXT_CHARS,
     SCHEMA_VERSION,
+    AudioEnd,
     BadMessage,
+    Cue,
     Error,
     ErrorCode,
     Heard,
@@ -124,6 +126,8 @@ SERVER_MESSAGES: list[ServerMessage] = [
     SessionInfo(session_id="s-1", resumed=False),
     Say(utterance_id="u-1", text="Question 5 of 60.", kind="question"),
     Stop(utterance_id="u-1"),
+    AudioEnd(utterance_id="u-1"),
+    Cue(name="saved", volume=0.5),
     Heard(text="C", confidence=0.96, seq=4),
     State(
         question=5,

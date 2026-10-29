@@ -20,13 +20,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 REPLIES = {
-    "hmm i reckon it is probably b": {"action": "answer", "args": {"choice": "B"}},
+    "hmm i reckon it is probably b": {"action": "answer", "choice": "B"},
     "on second thoughts make number seven a instead": {
         "action": "change_answer",
-        "args": {"choice": "A", "question": 7},
+        "choice": "A",
+        "question": 7,
     },
-    "i am through i want to hand in": {"action": "submit", "args": {}},
-    "is b the right one": {"action": "not_allowed", "args": {}},
+    "i am through i want to hand in": {"action": "submit"},
+    "is b the right one": {"action": "not_allowed"},
 }
 
 
@@ -65,7 +66,7 @@ def main() -> None:
         def do_POST(self) -> None:
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length))
-            user = body["messages"][-1]["content"]
+            user = next(m["content"] for m in body["messages"] if m["role"] == "user")
             utterance = re.search(r"<utterance>(.*)</utterance>", user, re.S)
             said = utterance.group(1) if utterance else ""
             if "CRASH" in said:
@@ -79,7 +80,7 @@ def main() -> None:
                 content = "Sure! The answer is B."
             else:
                 key = re.sub(r"[^a-z ]", "", said.lower()).strip()
-                content = json.dumps(REPLIES.get(key, {"action": "unclear", "args": {}}))
+                content = json.dumps(REPLIES.get(key, {"action": "unclear"}))
             self._send(200, {"choices": [{"message": {"role": "assistant", "content": content}}]})
 
     ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()

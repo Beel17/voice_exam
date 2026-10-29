@@ -24,9 +24,11 @@ from fastapi import WebSocket, WebSocketDisconnect
 from voice_agent.adapters.base import AdapterRejected, AdapterUnavailable
 from voice_agent.contract import (
     AUDIO_BYTES_PER_SECOND,
+    AUDIO_OUT_FRAME_BYTES,
     MAX_AUDIO_FRAME_BYTES,
     MAX_UTTERANCE_SECONDS,
     SCHEMA_VERSION,
+    AudioEnd,
     BadMessage,
     Error,
     ErrorCode,
@@ -48,7 +50,7 @@ from voice_agent.contract import (
 )
 from voice_agent.runtime.degrade import Level
 from voice_agent.runtime.limits import RateLimiter
-from voice_agent.runtime.pools import PoolBusy
+from voice_agent.runtime.pools import PoolBusy, Priority
 from voice_agent.session.manager import LiveSession, NotFound, SessionManager
 from voice_agent.session.replies import (
     IdentifyPrompt,
@@ -60,6 +62,7 @@ from voice_agent.session.replies import (
     render,
 )
 from voice_agent.speech.stt import Recognizer
+from voice_agent.speech.tts import Synthesizer, split_sentences
 
 log = logging.getLogger(__name__)
 
@@ -108,12 +111,13 @@ async def serve(
     device_tokens: Iterable[str],
     max_messages_per_10s: int,
     recognizer: Recognizer | None = None,
+    synthesizer: Synthesizer | None = None,
 ) -> None:
     await ws.accept()
     hello = await _hello(ws, device_tokens)
     if hello is None:
         return
-    connection = _Connection(ws, manager, hub, max_messages_per_10s, recognizer)
+    connection = _Connection(ws, manager, hub, max_messages_per_10s, recognizer, synthesizer)
     try:
         await connection.start(hello)
         await connection.run()
@@ -160,11 +164,16 @@ class _Connection:
         hub: Hub,
         max_messages_per_10s: int,
         recognizer: Recognizer | None,
+        synthesizer: Synthesizer | None,
     ) -> None:
         self._ws = ws
         self._manager = manager
         self._hub = hub
         self._recognizer = recognizer
+        self._synthesizer = synthesizer
+        # The reply being spoken now; cancelled by the talk key.
+        self._speech: asyncio.Task[None] | None = None
+        self._outside = 0  # replies said outside a session, for unique utterance IDs
         self._session: LiveSession | None = None
         self._writer: asyncio.Task[None] | None = None
         self._limiter = RateLimiter(max_messages_per_10s, FRAMES_WINDOW_S)
@@ -235,7 +244,13 @@ class _Connection:
     # --- Talking ----------------------------------------------------------------------
 
     async def _talk_start(self) -> None:
-        # Barge-in: pressing the talk key silences whatever is playing, at once.
+        # Barge-in: pressing the talk key silences whatever is playing, stops making the
+        # rest of it, and drops replies not yet started: they answered the last sentence,
+        # and the candidate is about to say a new one.
+        if self._speech is not None:
+            self._speech.cancel()
+        if self._session is not None:
+            self._drop_queued_replies(self._session)
         for utterance_id in sorted(self._playing):
             await _send(self._ws, Stop(utterance_id=utterance_id))
         self._playing.clear()
@@ -268,7 +283,7 @@ class _Connection:
             return
         session = self._session
         session.emit(Heard(text=heard.text, confidence=heard.confidence, seq=session.state.seq + 1))
-        await self._manager.handle_text(session, heard.text)
+        await self._manager.handle_text(session, heard.text, heard.confidence)
 
     async def _login(self, reg_no: str, exam_code: str) -> None:
         try:
@@ -295,14 +310,49 @@ class _Connection:
                 message = await queue.get()
                 if isinstance(message, Say):
                     self._playing.add(message.utterance_id)
+                    await _send(self._ws, message)
+                    if self._synthesizer is not None:
+                        speed = session.state.speed
+                        self._speech = asyncio.create_task(self._speak(message, speed))
+                        await asyncio.wait({self._speech})  # the talk key may cancel it
+                        self._speech = None
+                    continue
                 await _send(self._ws, message)
 
+    async def _speak(self, say: Say, speed: float) -> None:
+        """Stream a reply's audio, sentence by sentence, the first one with priority."""
+        assert self._synthesizer is not None
+        for k, sentence in enumerate(split_sentences(say.text)):
+            priority = Priority.FIRST_SENTENCE if k == 0 else Priority.REST_OF_REPLY
+            try:
+                pcm = await self._synthesizer.synthesize(sentence, speed, priority)
+            except PoolBusy:
+                await _send(self._ws, _error(ErrorCode.BUSY, "Speech is busy."))
+                break  # the text is on screen; load raises the degradation level
+            for start in range(0, len(pcm), AUDIO_OUT_FRAME_BYTES):
+                await self._ws.send_bytes(pcm[start : start + AUDIO_OUT_FRAME_BYTES])
+        await _send(self._ws, AudioEnd(utterance_id=say.utterance_id))
+
+    @staticmethod
+    def _drop_queued_replies(session: LiveSession) -> None:
+        kept = [m for m in session.drain() if not isinstance(m, Say)]
+        for message in kept:
+            session.emit(message)
+
     async def _say(self, reply: TemplateReply) -> None:
-        """A reply outside any session's script (sign-in, busy, keyboard mode)."""
+        """A reply outside any session's script (sign-in, busy, keyboard mode): spoken too,
+        since these are exactly the moments a blind candidate most needs to hear."""
+        self._outside += 1
         for n, spoken in enumerate(render(reply)):
-            await _send(self._ws, Say(utterance_id=f"pre.{n}", text=spoken.text, kind=spoken.kind))
+            say = Say(utterance_id=f"pre{self._outside}.{n}", text=spoken.text, kind=spoken.kind)
+            self._playing.add(say.utterance_id)
+            await _send(self._ws, say)
+            if self._synthesizer is not None:
+                await self._speak(say, 1.0)
 
     def detach(self) -> None:
+        if self._speech is not None:
+            self._speech.cancel()
         if self._writer is not None:
             self._writer.cancel()
         if self._session is not None:

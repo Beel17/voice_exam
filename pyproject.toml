@@ -56,3 +56,14 @@ testpaths = ["tests", "spec/conformance"]
 addopts = "--strict-markers --strict-config"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+
+[[tool.mypy.overrides]]
+# Native speech library without type information.
+module = ["sherpa_onnx", "sherpa_onnx.*"]
+ignore_missing_imports = true
+
+[tool.ruff.lint.per-file-ignores]
+# Look-alike characters (×, −, α) are exactly what these files exist to handle.
+"src/voice_agent/speech/speakable.py" = ["RUF001"]
+"tests/unit/test_speakable.py" = ["RUF001"]
+"tests/integration/test_synthesis.py" = ["RUF001"]
