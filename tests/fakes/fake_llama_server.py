@@ -41,6 +41,7 @@ def main() -> None:
     if args.pid_file:
         Path(args.pid_file).write_text(str(os.getpid()))
     if args.exit_at_start:
+        print("load_model: failed to load model 'm.gguf'", flush=True)
         sys.exit(3)
     ready_at = time.monotonic() + args.ready_after
 

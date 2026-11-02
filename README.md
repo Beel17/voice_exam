@@ -90,8 +90,11 @@ libraries, the models, and a config with a fresh device token (needs internet on
 `tools/fetch_models.py`; Windows only for now):
 
 ```bash
-uv run python -m tools.make_bundle
+uv run python -m tools.make_bundle --zip
 ```
+
+Share `dist/voice-exam.zip`, never a folder that has been run: running leaves sessions in
+`data/`, and a tester signing in on someone else's sessions resumes their exam.
 
 Copy `dist/voice-exam` (about 1.5 GB) to a flash drive. It is ready for blind testers:
 one "Start exam" script per voice (the testers choose), which starts the service and

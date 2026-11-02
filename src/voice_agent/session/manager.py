@@ -26,6 +26,7 @@ from voice_agent.session.replies import (
     KeyboardMode,
     NothingHeard,
     NotUnderstood,
+    PracticeEnded,
     QuestionNotAvailable,
     Reply,
     Saved,
@@ -105,6 +106,7 @@ class SessionManager:
         time_warnings_min: Sequence[int] = (15, 5),
         max_utterance_chars: int = 300,
         understander: Understander | None = None,
+        practice: bool = False,
         new_session_id: Callable[[], str] = lambda: uuid.uuid4().hex,
         clock: Callable[[], float] = time.time,
     ) -> None:
@@ -113,6 +115,7 @@ class SessionManager:
         self._timeout = adapter_timeout_s
         self._max_utterance_chars = max_utterance_chars
         self._understander = understander
+        self._practice = practice  # sample exams, not a real platform
         self._level = Level.NORMAL
         self._announcements = 0
         self._model_refusals: deque[float] = deque(maxlen=1000)
@@ -213,6 +216,8 @@ class SessionManager:
         session.output = asyncio.Queue(OUTPUT_QUEUE_SIZE)
         async with session.lock:
             await self._feed(session, m.Resumed())
+            if self._practice and session.state.phase is m.Phase.ENDED:
+                self._aside(session, PracticeEnded())
             self._emit_state(session)
         return session
 
@@ -347,8 +352,12 @@ class SessionManager:
             if question
             else ()
         )
+        section = state.section_of(state.current)
         return grammar.RulesContext(
-            option_texts=options, section_titles=tuple(s.title for s in state.sections)
+            option_texts=options,
+            section_titles=tuple(s.title for s in state.sections),
+            current_section=section.number if section else None,
+            awaiting=m.snapshot(state, None).pending_confirm is not None,
         )
 
     async def handle_key(self, session: LiveSession, key: Key) -> None:

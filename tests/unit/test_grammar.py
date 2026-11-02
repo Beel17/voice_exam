@@ -357,3 +357,45 @@ def test_a_word_only_one_option_has_chooses_it(text: str, letter: str) -> None:
 @pytest.mark.parametrize("text", ["plan", "the plan", "the plan was", "option", "is it failed"])
 def test_words_that_do_not_pick_out_one_option_choose_nothing(text: str) -> None:
     assert match(text, Q6) is None
+
+
+# --- From the second session -------------------------------------------------------------
+
+IN_ENGLISH = RulesContext(section_titles=SECTIONS, current_section=1)
+
+
+@pytest.mark.parametrize(
+    "text", ["Change the subject", "Go to the next subject", "next section", "switch subject"]
+)
+def test_the_next_subject(text: str) -> None:
+    # Candidates call an exam's sections its subjects.
+    assert match(text, IN_ENGLISH) == i.GoToSection(args=i.SectionArgs(section=2))
+
+
+def test_the_previous_subject() -> None:
+    in_physics = RulesContext(section_titles=SECTIONS, current_section=3)
+    assert match("previous subject", in_physics) == i.GoToSection(args=i.SectionArgs(section=2))
+    assert match("previous subject", IN_ENGLISH) is None  # there is none before the first
+
+
+def test_a_subject_by_name() -> None:
+    assert match("go to the physics subject", IN_ENGLISH) == i.GoToSection(
+        args=i.SectionArgs(section=3)
+    )
+
+
+@pytest.mark.parametrize(
+    "text", ["Which questions are when answered?", "unanswer questions", "un answered questions"]
+)
+def test_unanswered_as_the_recogniser_heard_it(text: str) -> None:
+    assert match(text) == i.ListUnanswered()
+
+
+def test_council_is_cancel_only_while_a_yes_or_no_is_expected() -> None:
+    assert match("Council", RulesContext(awaiting=True)) == i.Cancel()
+    assert match("Council") is None
+
+
+@pytest.mark.parametrize("text", ["Finish the exams", "end the exams"])
+def test_finishing_the_exams(text: str) -> None:
+    assert match(text) == i.Submit()

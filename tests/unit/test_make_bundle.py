@@ -55,3 +55,25 @@ def test_the_guide_and_form_ship() -> None:
     for script in make_bundle.SCRIPTS:
         if script != "run-service.bat":
             assert script.removesuffix(".bat") in guide, script
+
+
+def test_the_zip_leaves_out_what_a_run_left_behind(tmp_path: Path) -> None:
+    import zipfile
+
+    folder = tmp_path / "voice-exam"
+    for name in (
+        "run-service.bat",
+        "lib/voice_agent/main.py",
+        "data/sessions.db",
+        "data/llama-server.log",
+        "feedback/session-01.txt",
+        "bench-report.json",
+    ):
+        (folder / name).parent.mkdir(parents=True, exist_ok=True)
+        (folder / name).write_text("x", encoding="ascii")
+    archive = make_bundle.zip_bundle(folder, tmp_path / "voice-exam.zip")
+    with zipfile.ZipFile(archive) as z:
+        assert sorted(z.namelist()) == [
+            "voice-exam/lib/voice_agent/main.py",
+            "voice-exam/run-service.bat",
+        ]

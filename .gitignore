@@ -18,3 +18,4 @@ config/centre.toml
 
 # Benchmark output (send it back; do not commit it).
 bench-report.json
+model-diagnosis.txt

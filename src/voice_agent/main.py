@@ -25,7 +25,12 @@ from voice_agent.session.events import SessionStore
 from voice_agent.session.manager import SessionManager
 from voice_agent.speech.stt import MODEL_FILES, Recognizer, SherpaRecognizer
 from voice_agent.speech.tts import SherpaSynthesizer, Synthesizer
-from voice_agent.understanding.llm import LlamaServer, LlmUnderstander, llama_server_command
+from voice_agent.understanding.llm import (
+    LlamaServer,
+    LlmUnderstander,
+    ModelServerFailed,
+    llama_server_command,
+)
 
 log = logging.getLogger(__name__)
 
@@ -58,6 +63,7 @@ def create_app(
             time_warnings_min=settings.time_warnings_min,
             max_utterance_chars=settings.limits.max_utterance_chars,
             understander=understander,
+            practice=settings.adapter.kind == "fake",
         )
         runtime = Runtime(
             settings,
@@ -236,6 +242,9 @@ async def _start_language_model(
     try:
         await server.start()
         await understander.warm()
+    except ModelServerFailed as e:
+        # Said plainly, with the reason: this is what a tester copies and sends back.
+        log.error("language model unavailable; running on rules only. %s", e)
     except Exception:
         log.exception("language model unavailable; running on rules only")
     return server, understander
@@ -264,7 +273,17 @@ def _watch_load(runtime: Runtime, degrader: Degrader) -> Work:
 
 def _keep_model(server: LlamaServer, understander: LlmUnderstander) -> Work:
     async def check() -> None:
-        if await server.ensure_running():
+        try:
+            restarted = await server.ensure_running()
+        except ModelServerFailed as e:
+            # One line per attempt, ever less often: the full reason was logged at start-up.
+            log.warning(
+                "language model still not running (%s); next try in %.0f s",
+                str(e).split(".", 1)[0],
+                server.retry_in_s,
+            )
+            return
+        if restarted:
             log.warning("language model restarted (%d restarts)", server.restarts)
             await understander.warm()
 

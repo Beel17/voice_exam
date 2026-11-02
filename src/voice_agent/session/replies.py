@@ -84,6 +84,12 @@ class StillThinking:
 
 
 @dataclass(frozen=True, slots=True)
+class PracticeEnded:
+    """A practice exam (the fake platform) that was already finished: say how to take it
+    again, or a tester is left hearing "submitted" whatever they do."""
+
+
+@dataclass(frozen=True, slots=True)
 class NothingHeard:
     """The talk key was held, but recognition found no words."""
 
@@ -323,6 +329,7 @@ TemplateReply = (
     | OneMoment
     | StillThinking
     | NothingHeard
+    | PracticeEnded
     | NotRegistered
     | PlatformUnavailable
     | Welcome
@@ -530,6 +537,12 @@ def _render_template(reply: TemplateReply) -> Spoken:
             return Spoken("One moment, please. Then say that again, or use the keyboard.", "prompt")
         case StillThinking():
             return Spoken("One moment.", "prompt")
+        case PracticeEnded():
+            return Spoken(
+                "This practice exam is finished. To take it again, sign in with another "
+                "registration number, or close the service window and run Start over.",
+                "prompt",
+            )
         case NothingHeard():
             return Spoken(
                 "I did not hear anything. Hold Space while you speak, then let go.", "prompt"

@@ -74,6 +74,10 @@ Double-click "Collect feedback". It makes a folder called feedback with:
 Send the whole feedback folder back. Tell testers beforehand that their spoken words are
 kept as text in these transcripts, and only send them if they agree.
 
+If the service window says "language model unavailable", close it, double-click
+"Diagnose the language model" (a few minutes), then "Collect feedback": the feedback folder
+then holds model-diagnosis.txt, which says why.
+
 To measure how fast this PC is: close the black window, double-click "Measure this PC"
 (about five minutes; don't use the PC meanwhile), then "Collect feedback" again.
 

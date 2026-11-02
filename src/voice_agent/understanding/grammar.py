@@ -30,6 +30,8 @@ class RulesContext:
 
     option_texts: tuple[tuple[str, ...], ...] = ()  # per option: its text and spoken_text
     section_titles: tuple[str, ...] = ()
+    current_section: int | None = None  # 1-based, for "next subject"
+    awaiting: bool = False  # a yes or no is expected (an answer, a clear, a submit)
 
 
 # --- Normalisation ----------------------------------------------------------------------
@@ -63,6 +65,13 @@ _LEADING: Final = re.compile(
 _TRAILING: Final = re.compile(r"\s+(?:please|now|for me|thank you|thanks|small|a bit|a little)$")
 
 
+# How the recogniser has heard words that matter, from testers' sessions. Only where the
+# heard form has no other use in an exam: "when answered" is "unanswered".
+_HEARD_AS: Final = (
+    (re.compile(r"\b(?:when answered|un answered|an answered|unanswer)\b"), "unanswered"),
+)
+
+
 def normalise(text: str) -> str:
     """Lower case, contractions expanded, punctuation dropped, number words as digits."""
     text = text.lower().replace("\N{RIGHT SINGLE QUOTATION MARK}", "'")
@@ -71,6 +80,8 @@ def normalise(text: str) -> str:
     text = re.sub(r"(?<![a-z0-9])-(?=\d)", " minus ", " ".join(words))
     text = re.sub(r"[^a-z0-9 ]+", " ", text)
     text = _number_words(text.split())
+    for heard, meant in _HEARD_AS:
+        text = heard.sub(meant, text)
     while True:
         stripped = _TRAILING.sub("", _LEADING.sub("", text))
         if stripped == text or not stripped:
@@ -400,7 +411,7 @@ _RULES: Final[list[_Rule]] = [
         r"submit|submit (?:my |the )?(?:exam|test|answers|paper)"
         r"|i am (?:done|finished|through)(?: with the (?:exam|test))?"
         r"|i have (?:finished|completed)(?: (?:the|my) (?:exam|test))?(?: i want to submit)?"
-        r"|finish(?: the| my)? (?:exam|test)|(?:end|and)(?: the| my)? (?:exam|test)"
+        r"|finish(?: the| my)? (?:exams?|tests?)|(?:end|and)(?: the| my)? (?:exams?|tests?)"
         # "end the exam, I am done". "and the exam" is how the recogniser hears "end the
         # exam" in some accents; submitting asks twice, so a mishearing costs a "no".
         r"|(?:end|and|finish)(?: the| my)? (?:exam|test) i am (?:done|finished|through)",
@@ -457,9 +468,15 @@ _CHOOSING: Final = re.compile(
 
 _SECTION_ALIASES: Final = {"maths": "mathematics", "math": "mathematics"}
 _SECTION_PHRASE: Final = re.compile(
-    r"(?:go to |take me to |move to |jump to |switch to |start )?(?:the )?(?P<s>.+?)"
-    r"(?: section| part| questions)?"
+    r"(?:go to |take me to |move to |jump to |switch to |change to |start )?(?:the )?(?P<s>.+?)"
+    r"(?: section| part| questions| subject)?"
 )
+_SECTION_STEP: Final = re.compile(
+    r"(?:go to |take me to |move to |move on to |jump to |switch to |change to |start )?"
+    r"(?:the )?(?P<d>next|following|previous|former) (?:subject|section|part)"
+    r"|(?P<change>change|switch)(?: the| my)? (?:subject|section)"
+)
+_HEARD_AS_CANCEL: Final = frozenset({"council", "counsel", "cancel it", "consul"})
 _SECTION_STOPWORDS: Final = frozenset({"use", "of", "and", "the", "for", "in", "paper", "part"})
 
 
@@ -496,6 +513,10 @@ def match(text: str, ctx: RulesContext = _NO_CONTEXT) -> i.Intent | None:
     for pattern, build in _RULES:
         if (m := pattern.fullmatch(said)) is not None:
             return build(m)
+    if ctx.awaiting and said in _HEARD_AS_CANCEL:
+        return i.Cancel()  # waiting for yes or no; "council" is no
+    if (step := _match_section_step(said, ctx)) is not None:
+        return step
     if (by_text := _match_option_text(said, ctx)) is not None:
         return by_text
     if (by_section := _match_section(said, ctx)) is not None:
@@ -525,6 +546,17 @@ def _match_option_text(said: str, ctx: RulesContext) -> i.Intent | None:
     if len(hits) != 1:
         return None
     return i.Answer(args=i.ChoiceArgs(choice=OPTION_LETTERS[hits[0]]))
+
+
+def _match_section_step(said: str, ctx: RulesContext) -> i.Intent | None:
+    """The next or previous section: "next subject", "change the subject". Candidates call
+    an exam's sections its subjects."""
+    if ctx.current_section is None or (m := _SECTION_STEP.fullmatch(said)) is None:
+        return None
+    n = ctx.current_section + (-1 if m["d"] in ("previous", "former") else 1)
+    if not 1 <= n <= i.MAX_SECTIONS:
+        return None
+    return i.GoToSection(args=i.SectionArgs(section=n))  # the machine says if there is none
 
 
 def _match_section(said: str, ctx: RulesContext) -> i.Intent | None:

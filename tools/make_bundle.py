@@ -1,7 +1,11 @@
 """Build a folder that runs the service on a Windows PC with nothing installed.
 
     uv run python -m tools.make_bundle            # writes dist/voice-exam
+    uv run python -m tools.make_bundle --zip      # and dist/voice-exam.zip, to share
     uv run python -m tools.make_bundle --out E:/voice-exam
+
+Share the zip, never a folder that has been run: running leaves sessions behind (data/),
+and a tester signing in on someone else's sessions resumes their exam, finished or not.
 
 Run it once on a machine with internet, after tools/fetch_models.py. The folder holds its
 own Python, the libraries, the service, the models and a configuration with a fresh device
@@ -16,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
@@ -31,8 +36,11 @@ TOOLS = [
     "text_client.py",
     "open_client.py",
     "export_sessions.py",
+    "diagnose_model.py",
 ]
 SKIP = shutil.ignore_patterns("__pycache__", "*.pyc")
+# What running the bundle leaves behind; never part of a copy for someone else.
+LOCAL_STATE = frozenset({"data", "feedback", "bench-report.json", "model-diagnosis.txt"})
 # The testers choose the voice: one start script each, named so a screen reader says it.
 VOICES = {
     "voice 1 (American woman)": "vits-piper-en_US-lessac-medium",
@@ -65,6 +73,7 @@ start "" http://127.0.0.1:8765/
 "%~dp0python\python.exe" -m tools.export_sessions --data data --out feedback
 if not exist feedback\FEEDBACK-FORM.txt copy FEEDBACK-FORM.txt feedback\ >nul
 if exist bench-report.json copy /y bench-report.json feedback\ >nul
+if exist model-diagnosis.txt copy /y model-diagnosis.txt feedback\ >nul
 echo.
 echo Fill in feedback\FEEDBACK-FORM.txt, then send the whole feedback folder back.
 start "" explorer "%~dp0feedback"
@@ -78,6 +87,14 @@ choice /m "Delete the test sessions"
 if errorlevel 2 exit /b
 rmdir /s /q data
 echo Done.
+pause
+""",
+    "Diagnose the language model.bat": ENV
+    + r"""echo Trying the language model several ways. This takes a few minutes.
+echo Close the service window first.
+"%~dp0python\python.exe" -m tools.diagnose_model
+echo.
+echo "Collect feedback" adds model-diagnosis.txt to the feedback folder.
 pause
 """,
     "Measure this PC.bat": ENV
@@ -97,6 +114,7 @@ pause
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--out", type=Path, default=ROOT / "dist" / "voice-exam")
+    parser.add_argument("--zip", action="store_true", help="also write <out>.zip, to share")
     args = parser.parse_args()
     if sys.platform != "win32":
         raise SystemExit("the bundle is built for Windows: run this on a Windows PC")
@@ -135,6 +153,20 @@ def main() -> None:
         (out / name).write_text(text.replace("\n", "\r\n"), encoding="ascii", newline="")
     size = sum(p.stat().st_size for p in out.rglob("*") if p.is_file())
     print(f"done: {out} ({size / 2**30:.1f} GB)")
+    if args.zip:
+        print("zip ...", flush=True)
+        archive = zip_bundle(out, out.with_suffix(".zip"))
+        print(f"done: {archive} ({archive.stat().st_size / 2**30:.1f} GB)")
+
+
+def zip_bundle(folder: Path, archive: Path) -> Path:
+    """``folder`` as one zip, under its own name, without anything a run left behind."""
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as z:
+        for path in sorted(folder.rglob("*")):
+            relative = path.relative_to(folder)
+            if path.is_file() and relative.parts[0] not in LOCAL_STATE:
+                z.write(path, Path(folder.name) / relative)
+    return archive
 
 
 def _copy_python(dest: Path) -> Path:

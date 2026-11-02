@@ -676,3 +676,21 @@ async def test_one_timeout_does_not_switch_the_model_off(h: Harness) -> None:
     await h.manager.handle_text(s, "read it once more")
     assert h.manager.recent_model_refusals() == 1
     assert level_for(Load(True, h.manager.recent_model_refusals())) is Level.NORMAL
+
+
+async def test_a_finished_practice_exam_says_how_to_take_it_again(h: Harness) -> None:
+    h.manager = SessionManager(h.store, h.platform, practice=True)
+    s = await h.login()
+    for text in ("start", "submit", "yes", "yes"):
+        await h.manager.handle_text(s, text)
+    assert s.state.phase is m.Phase.ENDED
+    s = await h.login()  # a tester signing in again later
+    assert "This practice exam is finished." in said(s)
+
+
+async def test_a_real_exam_has_no_practice_note(h: Harness) -> None:
+    s = await h.login()
+    for text in ("start", "submit", "yes", "yes"):
+        await h.manager.handle_text(s, text)
+    s = await h.login()
+    assert "practice" not in said(s)

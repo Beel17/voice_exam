@@ -10,7 +10,14 @@ from pathlib import Path
 import pytest
 
 from voice_agent.understanding import intents as i
-from voice_agent.understanding.llm import LlamaServer, LlmContext, LlmFallback, LlmUnderstander
+from voice_agent.understanding.llm import (
+    LlamaServer,
+    LlmContext,
+    LlmFallback,
+    LlmUnderstander,
+    ModelServerFailed,
+    describe_exit,
+)
 
 FAKE = Path(__file__).parents[1] / "fakes" / "fake_llama_server.py"
 CTX = LlmContext(question=1, of=60, option_count=4, awaiting=None)
@@ -77,10 +84,36 @@ async def test_a_hung_answer_times_out(running: LlamaServer) -> None:
     await llm.aclose()
 
 
-async def test_a_server_that_exits_at_start_is_reported(tmp_path: Path) -> None:
+async def test_a_server_that_exits_at_start_is_reported_with_its_reason(tmp_path: Path) -> None:
+    (tmp_path / "llm.log").write_text("an earlier run's output\n", encoding="utf-8")
     s = server(tmp_path, "--exit-at-start")
-    with pytest.raises(RuntimeError, match="exited"):
+    with pytest.raises(ModelServerFailed) as failed:
         await s.start()
+    # What a tester pastes back says why: the exit code, and this run's output only.
+    message = str(failed.value)
+    assert "exit code 3" in message
+    assert "failed to load model" in message and "earlier run" not in message
+
+
+def test_windows_exit_codes_are_explained() -> None:
+    # As a signed int (Python's returncode on Windows can be either) and unsigned.
+    assert "Visual C++" in describe_exit(0xC0000135)
+    assert "Visual C++" in describe_exit(0xC0000135 - 2**32)
+    assert describe_exit(-1073741819).startswith("exit code 0xC0000005: it crashed")
+    assert describe_exit(1) == "exit code 1"
+
+
+async def test_a_failing_server_is_retried_less_and_less_often(tmp_path: Path) -> None:
+    s = server(tmp_path, "--exit-at-start")
+    with pytest.raises(ModelServerFailed):
+        await s.ensure_running()
+    assert 4 < s.retry_in_s <= 5
+    assert await s.ensure_running() is False  # too soon: not even tried
+    s._next_try = 0.0
+    with pytest.raises(ModelServerFailed):
+        await s.ensure_running()
+    assert 9 < s.retry_in_s <= 10
+    assert s.failures == 2
 
 
 async def test_a_server_that_never_becomes_ready_is_stopped(tmp_path: Path) -> None:
