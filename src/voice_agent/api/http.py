@@ -1,6 +1,7 @@
 """HTTP endpoints: health for the installer and invigilators, status and audit for admins."""
 
 import os
+import time
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -59,6 +60,27 @@ class Status(_Body):
     degradation_level: int
 
 
+class Overview(_Body):
+    """The service at a glance, for the invigilators' status page. Counts and states
+    only: nothing that identifies a candidate, so it needs no token."""
+
+    status: Literal["ok", "degraded"]
+    mode: Literal["pc", "server"]
+    up_since: float  # Unix time
+    now: float
+    connected: int  # exam PCs connected now
+    live_sessions: int
+    # Answers and submissions confirmed by candidates but not yet accepted by the
+    # platform. Sent automatically; the one number an invigilator must watch.
+    unsynced_writes: int
+    language_model: Literal["running", "down", "disabled"]
+    language_model_problem: str | None
+    language_model_restarts: int
+    speech: Literal["running", "down", "disabled"]
+    voice: Literal["running", "down", "disabled"]
+    degradation_level: int
+
+
 class AuditEvent(_Body):
     seq: int
     at: float
@@ -78,6 +100,26 @@ async def readyz(rt: Annotated[Runtime, Depends(runtime)]) -> Health:
     healthy = "down" not in (model, speech, voice)
     return Health(
         status="ok" if healthy else "degraded", language_model=model, speech=speech, voice=voice
+    )
+
+
+@router.get("/v1/overview")
+async def overview(rt: Annotated[Runtime, Depends(runtime)]) -> Overview:
+    model, speech, voice = rt.language_model_state(), rt.speech_state(), rt.voice_state()
+    return Overview(
+        status="ok" if "down" not in (model, speech, voice) else "degraded",
+        mode=rt.settings.mode,
+        up_since=rt.started_at,
+        now=time.time(),
+        connected=len(rt.hub.owners),
+        live_sessions=rt.manager.live_count,
+        unsynced_writes=len(await rt.store.pending_writes()),
+        language_model=model,
+        language_model_problem=rt.language_model_problem(),
+        language_model_restarts=rt.llm_server.restarts if rt.llm_server else 0,
+        speech=speech,
+        voice=voice,
+        degradation_level=rt.manager.level,
     )
 
 

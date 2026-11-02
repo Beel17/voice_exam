@@ -1136,7 +1136,8 @@
     "speech/tts/vits-piper-en_US-lessac-medium/espeak-ng-data/voices/!v/zac": "edaf508b2cfbfd6088a163dcc78d5f6a26850a7d39a5a0e5128b09526f56b6db",
     "speech/tts/vits-piper-en_US-lessac-medium/espeak-ng-data/yue_dict": "1d26afa203034698772107abfff1b53acbee30434700a4d2b75dee98951588f8",
     "speech/tts/vits-piper-en_US-lessac-medium/MODEL_CARD": "ce49eb457742208166d399a40cdec2c7fa9db77960930031564ab56f12882645",
-    "speech/tts/vits-piper-en_US-lessac-medium/tokens.txt": "87c8ef66eae5473ed0cc0366b3964c736ca6c5f676c979522ea31234e47430b9"
+    "speech/tts/vits-piper-en_US-lessac-medium/tokens.txt": "87c8ef66eae5473ed0cc0366b3964c736ca6c5f676c979522ea31234e47430b9",
+    "winsw/WinSW-x64.exe": "05b82d46ad331cc16bdc00de5c6332c1ef818df8ceefcd49c726553209b3a0da"
   },
   "sources": [
     {
@@ -1173,6 +1174,11 @@
       "name": "Voice: British English, female (jenny)",
       "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_GB-jenny_dioco-medium.tar.bz2",
       "sha256": "a0888024569bafbefc05a4b48ddf8419d8dbbf3205f4af37cf7c6f1a87cc20c5"
+    },
+    {
+      "name": "WinSW 2.12.0, Windows service wrapper, x64 (MIT)",
+      "url": "https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe",
+      "sha256": "05b82d46ad331cc16bdc00de5c6332c1ef818df8ceefcd49c726553209b3a0da"
     }
   ]
 }

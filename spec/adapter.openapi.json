@@ -340,7 +340,7 @@
     "schemas": {
       "CandidateSession": {
         "additionalProperties": false,
-        "description": "Returned by ``verify_candidate``. These IDs are the only ones the service ever uses\nfor a candidate; nothing the candidate says can change them.",
+        "description": "Returned by ``verify_candidate``. These IDs are the only ones the service ever uses\nfor a candidate; nothing the candidate says can change them. ``exam_id`` names the\npaper as this candidate sees it: candidates may share it, or each have their own\nversion (questions and options in their own order), as the centre's exam store\ngives them. The same candidate always gets the same one.",
         "properties": {
           "candidate_id": {
             "pattern": "^[A-Za-z0-9._:/-]{1,64}$",

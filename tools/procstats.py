@@ -1,12 +1,13 @@
 """Memory and CPU time of another process, and a description of this machine.
 
-Reads the operating system directly (Windows API, or /proc on Linux) so the benchmark
-needs no extra dependency on the exam machines it runs on.
+Reads the operating system directly (Windows API, /proc on Linux, ps and sysctl on
+macOS) so the benchmark needs no extra dependency on the exam machines it runs on.
 """
 
 import ctypes
 import os
 import platform
+import subprocess
 import sys
 from pathlib import Path
 
@@ -15,6 +16,8 @@ def rss_bytes(pid: int) -> int:
     """Resident memory (working set on Windows) of process ``pid``."""
     if sys.platform == "win32":
         return _win_memory(pid)
+    if sys.platform == "darwin":
+        return int(_ps(pid, "rss")) * 1024  # kilobytes
     for line in Path(f"/proc/{pid}/status").read_text().splitlines():
         if line.startswith("VmRSS:"):
             return int(line.split()[1]) * 1024
@@ -25,6 +28,8 @@ def cpu_seconds(pid: int) -> float:
     """User plus system CPU time used so far by process ``pid``."""
     if sys.platform == "win32":
         return _win_cpu(pid)
+    if sys.platform == "darwin":
+        return parse_cputime(_ps(pid, "cputime"))
     fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
     ticks = int(fields[11]) + int(fields[12])  # utime, stime
     return ticks / os.sysconf("SC_CLK_TCK")
@@ -33,6 +38,8 @@ def cpu_seconds(pid: int) -> float:
 def total_ram_bytes() -> int:
     if sys.platform == "win32":
         return _win_total_ram()
+    if sys.platform == "darwin":
+        return int(_sysctl("hw.memsize"))
     for line in Path("/proc/meminfo").read_text().splitlines():
         if line.startswith("MemTotal:"):
             return int(line.split()[1]) * 1024
@@ -46,11 +53,37 @@ def cpu_name() -> str:
         key = r"HARDWARE\DESCRIPTION\System\CentralProcessor\0"
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key) as k:
             return str(winreg.QueryValueEx(k, "ProcessorNameString")[0]).strip()
+    elif sys.platform == "darwin":
+        return _sysctl("machdep.cpu.brand_string")  # "Apple M1", or an Intel model
     else:
         for line in Path("/proc/cpuinfo").read_text().splitlines():
             if line.startswith("model name"):
                 return line.split(":", 1)[1].strip()
     return platform.processor() or platform.machine()
+
+
+def parse_cputime(text: str) -> float:
+    """ps's CPU time, [[days-]hours:]minutes:seconds, as seconds."""
+    days, _, clock = text.strip().rpartition("-")
+    seconds = 0.0
+    for part in clock.split(":"):
+        seconds = seconds * 60 + float(part)
+    return seconds + (int(days) * 86_400 if days else 0)
+
+
+def _ps(pid: int, field: str) -> str:
+    out = subprocess.run(
+        ["ps", "-o", f"{field}=", "-p", str(pid)], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    if not out:
+        raise RuntimeError(f"no process {pid}")
+    return out
+
+
+def _sysctl(name: str) -> str:
+    return subprocess.run(
+        ["sysctl", "-n", name], capture_output=True, text=True, check=True
+    ).stdout.strip()
 
 
 def machine() -> dict[str, object]:

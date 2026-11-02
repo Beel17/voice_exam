@@ -32,7 +32,10 @@ class _Model(BaseModel):
 
 class CandidateSession(_Model):
     """Returned by ``verify_candidate``. These IDs are the only ones the service ever uses
-    for a candidate; nothing the candidate says can change them."""
+    for a candidate; nothing the candidate says can change them. ``exam_id`` names the
+    paper as this candidate sees it: candidates may share it, or each have their own
+    version (questions and options in their own order), as the centre's exam store
+    gives them. The same candidate always gets the same one."""
 
     candidate_id: Identifier
     exam_id: Identifier

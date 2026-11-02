@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Voice Exam Status</title>
+  <style>
+    :root { --bg: #ffffff; --fg: #111111; --muted: #555555; --panel: #f2f4f7; --line: #d9dde3;
+            --ok: #1b6e34; --ok-bg: #e6f4ea; --warn: #8a5300; --warn-bg: #fff4e0;
+            --bad: #b3261e; --bad-bg: #fce8e6; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #101214; --fg: #f2f2f2; --muted: #a8adb3; --panel: #1b1f24; --line: #2d333b;
+              --ok: #8fd6a2; --ok-bg: #143321; --warn: #f5c47a; --warn-bg: #3a2a10;
+              --bad: #f2b8b5; --bad-bg: #3d1614; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font: 18px/1.5 system-ui, sans-serif; }
+    main { max-width: 52rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+    h1 { font-size: 1.3rem; margin: 0 0 1rem; }
+    #banner { padding: 1rem 1.25rem; border-radius: .6rem; font-size: 1.35rem; font-weight: 650; margin-bottom: 1.25rem; }
+    #banner small { display: block; font-size: 1rem; font-weight: 400; margin-top: .25rem; }
+    .ok { background: var(--ok-bg); color: var(--ok); }
+    .warn { background: var(--warn-bg); color: var(--warn); }
+    .bad { background: var(--bad-bg); color: var(--bad); }
+    dl { margin: 0; border: 1px solid var(--line); border-radius: .6rem; overflow: hidden; }
+    .row { display: grid; grid-template-columns: minmax(11rem, 1fr) 2fr; gap: .25rem 1rem; padding: .8rem 1rem; border-top: 1px solid var(--line); }
+    .row:first-child { border-top: 0; }
+    dt { font-weight: 600; }
+    dd { margin: 0; }
+    dd .note { display: block; color: var(--muted); font-size: .95rem; }
+    dd.warn, dd.bad, dd.ok { background: none; }
+    footer { color: var(--muted); font-size: .9rem; margin-top: 1rem; }
+    @media (max-width: 36rem) { .row { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Voice exam service</h1>
+  <div id="banner" role="status" aria-live="polite">Checking…</div>
+  <dl id="rows"></dl>
+  <footer id="footer"></footer>
+</main>
+<script>
+// Everything shown comes from /v1/overview: counts and states, nothing about candidates.
+const LOADS = [
+  ["Normal", "ok", ""],
+  ["Busy", "warn", "Only simple commands are understood until it eases."],
+  ["Very busy", "warn", "Only fixed phrases are spoken until it eases."],
+  ["Overloaded", "bad", "Candidates use the keyboard until it eases."],
+];
+
+function row(label, value, level, note = "") {
+  return `<div class="row"><dt>${label}</dt><dd class="${level}"><strong>${value}</strong>` +
+    (note ? `<span class="note">${note}</span>` : "") + "</dd></div>";
+}
+
+function esc(text) {
+  return String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+}
+
+function since(seconds) {
+  const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60);
+  return h ? `${h} h ${m} min` : `${m} min`;
+}
+
+function component(state, working, down, off) {
+  if (state === "running") return ["Working", "ok", working];
+  if (state === "disabled") return ["Switched off", "warn", off];
+  return ["Not working", "bad", down];
+}
+
+function show(o) {
+  const waiting = o.unsynced_writes;
+  const speech = component(o.speech, "", "Candidates are moved to the keyboard.", "Candidates use the keyboard.");
+  const voice = component(o.voice, "", "Questions reach the PC as text only.", "Questions reach the PC as text only.");
+  const model = component(o.language_model, "",
+    `${o.language_model_problem ? esc(o.language_model_problem) + ". " : ""}Exams continue; only simple commands are understood.`,
+    "Exams continue; only simple commands are understood.");
+  if (o.language_model === "down" && o.language_model_restarts) model[2] += ` Restarted ${o.language_model_restarts} time(s).`;
+  // Without a language model the service always runs at level 1 (simple commands only):
+  // that is not load, and the language model row already says so.
+  const busy = o.degradation_level > (o.language_model === "running" ? 0 : 1);
+  const load = busy ? (LOADS[o.degradation_level] ?? LOADS[3]) : LOADS[0];
+  const problems = [waiting > 0, o.status !== "ok", busy].filter(Boolean).length;
+
+  const banner = document.getElementById("banner");
+  if (waiting > 0) {
+    banner.className = "warn";
+    banner.innerHTML = `${waiting} answer(s) waiting to reach the exam platform` +
+      "<small>They are kept safely on this computer and sent automatically while the service runs. Do not delete its folder or its test sessions.</small>";
+  } else if (problems) {
+    banner.className = "warn";
+    banner.innerHTML = "Working, with a problem<small>Exams continue. Details below.</small>";
+  } else {
+    banner.className = "ok";
+    banner.innerHTML = "Everything is working";
+  }
+
+  document.getElementById("rows").innerHTML = [
+    row("Answers waiting to reach the platform", waiting === 0 ? "None" : waiting, waiting === 0 ? "ok" : "warn",
+      waiting === 0 ? "" : "Sent automatically when the platform answers."),
+    row("Exam PCs connected", o.connected, "", o.mode === "pc" ? "This PC serves its own candidate." : "This server serves the centre."),
+    row("Speech recognition", ...speech),
+    row("Voice", ...voice),
+    row("Language model", ...model),
+    row("Load", load[0], load[1], load[2]),
+    row("Running since", new Date(o.up_since * 1000).toLocaleString(), "", `${since(o.now - o.up_since)}`),
+  ].join("");
+  document.getElementById("footer").textContent = `Checked at ${new Date().toLocaleTimeString()}. This page refreshes itself.`;
+}
+
+async function refresh() {
+  try {
+    const response = await fetch("/v1/overview", { cache: "no-store" });
+    if (!response.ok) throw new Error(response.status);
+    show(await response.json());
+  } catch {
+    const banner = document.getElementById("banner");
+    banner.className = "bad";
+    banner.innerHTML = "The service is not answering" +
+      "<small>If it runs as a Windows service it restarts itself within a minute or two. Otherwise start it again.</small>";
+    document.getElementById("footer").textContent = `Last tried at ${new Date().toLocaleTimeString()}.`;
+  }
+}
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

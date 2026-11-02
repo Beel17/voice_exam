@@ -103,6 +103,8 @@ class Candidate:
         self.ws = ws
         self.speaks = int(speaks)  # whether each say is followed by audio and audio_end
         self.heard = ""  # what the service recognised, last time
+        self.said: list[str] = []  # every reply's text, in order
+        self.state: dict[str, Any] = {}  # the latest state message
 
     @classmethod
     async def sign_in(cls, url: str, token: str, reg_no: str, speaks: bool) -> "Candidate":
@@ -168,6 +170,7 @@ class Candidate:
             if message["type"] in ("say", "cue") and not after_heard:
                 mine = True
             if message["type"] == "say":
+                self.said.append(message["text"])
                 if mine and first_say is None:
                     first_say = now
                 open_replies += self.speaks
@@ -180,6 +183,7 @@ class Candidate:
                 self.heard = message["text"]
                 mine = True
             elif message["type"] == "state":
+                self.state = message
                 stated = mine
         return (first_say if first_say is not None else time.perf_counter() - start), first_audio
 

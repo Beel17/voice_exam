@@ -98,6 +98,36 @@ the model path when a model is given), RAM per live session, and sessions per co
 With speech on, a synthetic voice also speaks commands as microphone audio, and the
 spoken row times the whole turn from releasing the talk key to the reply's first audio.
 
+## Failure drills
+
+```bash
+uv run python -m tools.drills                 # about two minutes
+uv run python -m tools.drills --with-model    # also kills the language model's server
+```
+
+Each drill runs the service as its own process, with the sample platform keeping its
+state on disk as a real one on another machine would, breaks something, and checks what
+a candidate cares about: the service killed mid-exam and while saving, the platform down
+at a save and at submit, the connection dropped mid-turn, the plug pulled at random while
+answers are being written (database integrity checked each time), and the model's server
+killed. A few of them also run in the test suite.
+
+## Installer
+
+```bash
+uv run python -m tools.make_bundle --out build/installer/voice-exam
+uv run python -m tools.make_installer
+```
+
+Builds `dist/voice-exam-setup-<version>.exe` (about 1.3 GB) with Inno Setup 6, which
+must be installed on the build machine. Running it needs administrator rights. It puts the
+program in Program Files and everything that changes in `C:\ProgramData\VoiceExam`: the
+configuration and device token (written on first install, kept on upgrade), sessions and
+logs. It installs and starts the Windows service, and adds Start-menu shortcuts to the
+exam page, the status page, the device token and the logs. Uninstalling removes the
+service and the program but keeps `ProgramData\VoiceExam`, which may hold answers not yet
+delivered to the platform. It is not code-signed yet, so Windows warns before running it.
+
 ## Test bundle
 
 To try it on a PC with nothing installed, build a folder holding its own Python, the
@@ -107,6 +137,12 @@ libraries, the models, and a config with a fresh device token (needs internet on
 ```bash
 uv run python -m tools.make_bundle --zip
 ```
+
+It can also run as a Windows service, as an exam centre would: "Install as a Windows
+service" (asks for administrator rights) sets it up with WinSW (pinned and checksummed by
+`fetch_models`, as `voice-exam-service.exe` with its settings in the `.xml` beside it). It
+then starts with the PC, has no window, restarts itself if it stops, and logs to
+`data/logs/`.
 
 Share `dist/voice-exam.zip`, never a folder that has been run: running leaves sessions in
 `data/`, and a tester signing in on someone else's sessions resumes their exam.

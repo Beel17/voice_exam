@@ -216,6 +216,6 @@ def test_a_processor_without_avx2_runs_on_rules_only(
 ) -> None:
     import voice_agent.main as main_module
 
-    monkeypatch.setattr(main_module, "cpu_has_avx2", lambda: False)
+    monkeypatch.setattr(main_module, "cpu_can_run_model", lambda: False)
     with TestClient(create_app(settings)) as client:
         assert client.get("/readyz").json()["language_model"] != "running"

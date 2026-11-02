@@ -5,13 +5,39 @@ speech workers must go with it: a leftover worker holds memory and its port, and
 restarted service could then not start its own. On Windows each child joins a job object
 that kills its members when the service's handle to it closes, which the operating system
 does however the service exits; on Linux each child asks to be signalled when its parent
-dies.
+dies. macOS has neither, so there each child runs under a warden (runtime/warden.py) that
+holds a pipe from the service and kills the child when the pipe closes.
+
+Setting VOICE_AGENT_WARDEN=1 uses the warden on any system instead, so that it can be
+tested where the system mechanisms would otherwise make it unnecessary.
 """
 
 import ctypes
+import os
 import signal
+import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+
+WARDEN_ENV = "VOICE_AGENT_WARDEN"
+
+
+def uses_warden() -> bool:
+    return sys.platform == "darwin" or os.environ.get(WARDEN_ENV) == "1"
+
+
+def command_for(command: Sequence[str]) -> list[str]:
+    """How to start ``command`` so that it cannot outlive this process."""
+    if not uses_warden():
+        return list(command)
+    return [sys.executable, "-m", "voice_agent.runtime.warden", "--", *command]
+
+
+def stdin_for() -> int:
+    """The child's standard input: the warden's lifeline pipe, or nothing at all. The
+    pipe must stay open for the life of the child; asyncio's process object holds it."""
+    return subprocess.PIPE if uses_warden() else subprocess.DEVNULL
+
 
 if sys.platform == "win32":
     from ctypes import wintypes
@@ -69,6 +95,8 @@ if sys.platform == "win32":
 
     def bind_to_this_process(pid: int) -> None:
         """Make process ``pid`` end when this process ends, however it ends."""
+        if uses_warden():
+            return  # the warden does it (and must be seen to, in its tests)
         process = _kernel32.OpenProcess(_SET_QUOTA_AND_TERMINATE, False, pid)
         if not process:
             raise ctypes.WinError(ctypes.get_last_error())
@@ -84,11 +112,12 @@ if sys.platform == "win32":
 else:
 
     def bind_to_this_process(pid: int) -> None:
-        """On Linux the binding is set up in the child itself, by ``before_exec``."""
+        """Elsewhere the binding is in the child itself: ``before_exec`` on Linux, the
+        warden on macOS."""
 
     def before_exec() -> Callable[[], None] | None:
         """For subprocess ``preexec_fn``: SIGTERM the child when its parent dies."""
-        if not sys.platform.startswith("linux"):
+        if not sys.platform.startswith("linux") or uses_warden():
             return None
         libc = ctypes.CDLL(None, use_errno=True)
         set_parent_death_signal = 1  # PR_SET_PDEATHSIG

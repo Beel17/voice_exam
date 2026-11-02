@@ -61,11 +61,15 @@ class AdapterSettings(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # "fake" serves the bundled sample exams; "http" and "sql" arrive with phase 7.
-    kind: Literal["fake"] = "fake"
+    # "fake" serves the bundled sample exams; "local" the centre's exam store
+    # (<data_dir>/exams.db, set up with python -m voice_agent.examstore).
+    kind: Literal["fake", "local"] = "fake"
     timeout_s: float = Field(default=2.0, gt=0, le=30)
     # Fake platform only: extra sample-exam candidates for load tests (LOAD00001...).
     load_candidates: int = Field(default=0, ge=0, le=10_000)
+    # Fake platform only: keep its state here, outliving the service as a real platform
+    # would, with switches for failure drills (see fake_adapter).
+    state_dir: Path | None = None
 
 
 class SpeechSettings(BaseModel):

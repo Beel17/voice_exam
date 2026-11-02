@@ -1,5 +1,6 @@
 """The model server must run on any Windows PC: no C++ runtime of the PC's own."""
 
+import platform
 from pathlib import Path
 
 import pytest
@@ -29,4 +30,9 @@ def test_the_import_reader_sees_a_runtime_dependency() -> None:
 
 
 def test_this_processor_is_asked() -> None:
-    assert isinstance(llm.cpu_has_avx2(), bool)
+    assert isinstance(llm.cpu_can_run_model(), bool)
+
+
+def test_arm_processors_always_can(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(platform, "machine", lambda: "arm64")  # Apple Silicon
+    assert llm.cpu_can_run_model()

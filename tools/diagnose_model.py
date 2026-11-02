@@ -12,6 +12,7 @@ minutes; send model-diagnosis.txt back.
 
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Final
@@ -201,7 +202,8 @@ def main() -> None:
         block = [f"{n}. {title}: {lines[0]}", *(f"   {line}" for line in lines[1:]), ""]
         print("\n".join(block), flush=True)
         report += block
-    report += windows_facts(minutes=int((time.time() - began) / 60) + 2)
+    if sys.platform == "win32":  # Windows keeps a record of crashes; others differ
+        report += windows_facts(minutes=int((time.time() - began) / 60) + 2)
     out = Path("model-diagnosis.txt")
     out.write_text("\n".join(report) + "\n", encoding="utf-8")
     print(f"Written to {out.resolve()}: please send it back.")

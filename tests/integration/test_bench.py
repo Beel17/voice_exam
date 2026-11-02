@@ -70,3 +70,43 @@ async def test_a_short_spoken_run() -> None:
     assert spoken["heard_exactly"] == f"{len(bench.SPOKEN)}/{len(bench.SPOKEN)}"
     assert spoken["first_audio_p50_ms"] > 0
     bench.show(report)
+
+
+def test_cpu_time_as_ps_prints_it() -> None:
+    from tools.procstats import parse_cputime
+
+    assert parse_cputime("0:01.23") == 1.23  # minutes:seconds (macOS)
+    assert parse_cputime("1:02:03.50") == 3723.5  # hours too
+    assert parse_cputime("2-01:00:00") == 2 * 86_400 + 3600  # and days
+
+
+async def test_a_grandchild_is_found_by_name(tmp_path: Path) -> None:
+    # As the model server is found under the warden on macOS: two levels down. (A
+    # virtual environment's python on Windows is a launcher with the real one below it,
+    # so more than one may be found; the grandchild must be among them.)
+    import asyncio
+    import signal
+    import sys
+
+    from tools.drills import descendants
+
+    pid_file = tmp_path / "grandchild.pid"
+    inner = f"import os, time; open({str(pid_file)!r}, 'w').write(str(os.getpid())); time.sleep(30)"
+    outer = (
+        "import subprocess, sys, time; "
+        f"child = subprocess.Popen([sys.executable, '-c', {inner!r}]); time.sleep(30)"
+    )
+    parent = await asyncio.create_subprocess_exec(sys.executable, "-c", outer)
+    try:
+        for _ in range(200):
+            if pid_file.exists() and pid_file.read_text():
+                break
+            await asyncio.sleep(0.05)
+        grandchild = int(pid_file.read_text())
+        assert grandchild in descendants(parent.pid, "python")
+        assert grandchild not in descendants(grandchild, "python")  # not its own descendant
+    finally:
+        for pid in descendants(parent.pid, "python"):
+            os.kill(pid, signal.SIGTERM)
+        parent.kill()
+        await parent.wait()

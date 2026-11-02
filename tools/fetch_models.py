@@ -112,7 +112,18 @@ VOICES = [
     ),
 ]
 
-ARTIFACTS = [LLAMA_CPP, QWEN_1_5B, QWEN_0_5B, ASR_KROKO, *VOICES]
+# Runs the voice service as a Windows service (MIT licence). The self-contained build: it
+# carries its own .NET runtime, so it needs nothing installed on the PC. Not signed by its
+# authors; this checksum, taken from the release when it was pinned, is what vouches for it.
+WINSW = Artifact(
+    name="WinSW 2.12.0, Windows service wrapper, x64 (MIT)",
+    url="https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe",
+    sha256="05b82d46ad331cc16bdc00de5c6332c1ef818df8ceefcd49c726553209b3a0da",
+    size=18_243_033,
+    file="winsw/WinSW-x64.exe",
+)
+
+ARTIFACTS = [LLAMA_CPP, QWEN_1_5B, QWEN_0_5B, ASR_KROKO, *VOICES, WINSW]
 
 
 def sha256_of(path: Path) -> str:

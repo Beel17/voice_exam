@@ -1,6 +1,7 @@
 """Everything the endpoints share for the life of the process."""
 
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import Literal
 
 from voice_agent.api.ws import Hub
@@ -22,6 +23,16 @@ class Runtime:
     llm_server: LlamaServer | None
     recognizer: Recognizer | None = None
     synthesizer: Synthesizer | None = None
+    model_note: str | None = None  # why the language model is not used, if it is not
+    started_at: float = field(default_factory=time.time)
+
+    def language_model_problem(self) -> str | None:
+        """Why the model is not running, in words; None when it is."""
+        if self.language_model_state() == "running":
+            return None
+        if self.llm_server is not None and self.llm_server.last_failure:
+            return self.llm_server.last_failure
+        return self.model_note
 
     def speech_state(self) -> Literal["running", "down", "disabled"]:
         """Recognition: when it is down, candidates are moved to the keyboard."""

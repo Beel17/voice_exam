@@ -20,6 +20,8 @@ from voice_agent.adapters.fake_adapter import FakeAdapter
 from voice_agent.api import http, ws
 from voice_agent.api.runtime import Runtime
 from voice_agent.config import Settings
+from voice_agent.examstore.adapter import LocalAdapter
+from voice_agent.examstore.store import ExamStore
 from voice_agent.runtime.degrade import Degrader, Load
 from voice_agent.session.events import SessionStore
 from voice_agent.session.manager import SessionManager
@@ -29,7 +31,7 @@ from voice_agent.understanding.llm import (
     LlamaServer,
     LlmUnderstander,
     ModelServerFailed,
-    cpu_has_avx2,
+    cpu_can_run_model,
     llama_server_command,
 )
 
@@ -54,17 +56,18 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         store = await SessionStore.open(settings.data_dir / "sessions.db")
-        llm_server, understander = await _start_language_model(settings)
+        platform, close_platform = (adapter, _nothing) if adapter else _adapter(settings)
+        llm_server, understander, model_note = await _start_language_model(settings)
         owned_recognizer = None if recognizer else await _start_recognizer(settings)
         owned_synthesizer = None if synthesizer else await _start_synthesizer(settings)
         manager = SessionManager(
             store,
-            adapter or _adapter(settings),
+            platform,
             adapter_timeout_s=settings.adapter.timeout_s,
             time_warnings_min=settings.time_warnings_min,
             max_utterance_chars=settings.limits.max_utterance_chars,
             understander=understander,
-            practice=settings.adapter.kind == "fake",
+            practice=adapter is None and settings.adapter.kind == "fake",
         )
         runtime = Runtime(
             settings,
@@ -74,6 +77,7 @@ def create_app(
             llm_server,
             recognizer or owned_recognizer,
             synthesizer or owned_synthesizer,
+            model_note=model_note,
         )
         app.state.runtime = runtime
         watch_load = _watch_load(runtime, Degrader())
@@ -104,6 +108,7 @@ def create_app(
             if owned_synthesizer is not None:
                 await owned_synthesizer.stop()
             await store.close()
+            close_platform()
 
     # No interactive docs: they load assets from the internet, and the service is offline.
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
@@ -117,6 +122,10 @@ def create_app(
     @app.get("/", include_in_schema=False)
     async def home() -> RedirectResponse:
         return RedirectResponse("/client/")
+
+    @app.get("/status", include_in_schema=False)
+    async def status_page() -> RedirectResponse:
+        return RedirectResponse("/client/status.html")
 
     @app.websocket("/v1/session")
     async def session(websocket: WebSocket) -> None:
@@ -134,12 +143,22 @@ def create_app(
     return app
 
 
-def _adapter(settings: Settings) -> ExamDataAdapter:
+def _nothing() -> None:
+    pass
+
+
+def _adapter(settings: Settings) -> tuple[ExamDataAdapter, Callable[[], None]]:
+    """The platform, and how to let go of it at shutdown."""
     match settings.adapter.kind:
         case "fake":
-            return FakeAdapter.with_bundled_fixtures(
-                load_candidates=settings.adapter.load_candidates
+            fake = FakeAdapter.with_bundled_fixtures(
+                load_candidates=settings.adapter.load_candidates,
+                state_dir=settings.adapter.state_dir,
             )
+            return fake, _nothing
+        case "local":
+            store = ExamStore(settings.data_dir / "exams.db")
+            return LocalAdapter(store), store.close
 
 
 async def _start_recognizer(settings: Settings) -> SherpaRecognizer | None:
@@ -200,12 +219,13 @@ async def _start_synthesizer(settings: Settings) -> SherpaSynthesizer | None:
 
 async def _start_language_model(
     settings: Settings,
-) -> tuple[LlamaServer | None, LlmUnderstander | None]:
+) -> tuple[LlamaServer | None, LlmUnderstander | None, str | None]:
     """Start and warm the model server. If it cannot start, run on rules only: the exam
-    never depends on the language model."""
+    never depends on the language model. The third value says why it is not used, if it
+    is not, for the status page."""
     cfg = settings.llm
     if not cfg.enabled:
-        return None, None
+        return None, None, "switched off in the configuration"
     binary = shutil.which(str(cfg.server_binary))  # finds llama-server.exe on Windows too
     if binary is None or not cfg.model_file.is_file():
         log.warning(
@@ -213,14 +233,14 @@ async def _start_language_model(
             cfg.server_binary,
             cfg.model_file,
         )
-        return None, None
-    if not cpu_has_avx2():
-        # The server is built for AVX2; without it, measured answers took 9 s, not 0.7 s.
+        return None, None, "its files are missing"
+    if not cpu_can_run_model():
+        # On x86 the server is built for AVX2; without it, answers took 9 s, not 0.7 s.
         log.warning(
             "this processor lacks AVX2, which the language model needs to answer in time; "
             "running on rules only"
         )
-        return None, None
+        return None, None, "this processor is too old for it (no AVX2)"
     began = time.perf_counter()
     problems = await asyncio.to_thread(
         selfcheck.model_file_problems, settings.models_dir, Path(binary), cfg.model_file
@@ -229,7 +249,7 @@ async def _start_language_model(
         for problem in problems:
             log.error("model check failed: %s", problem)
         log.error("language model not used; running on rules only")
-        return None, None
+        return None, None, "its files do not match the manifest (damaged or changed)"
     log.info(
         "model files verified in %.1f s; server %s",
         time.perf_counter() - began,
@@ -259,7 +279,7 @@ async def _start_language_model(
         log.error("language model unavailable; running on rules only. %s", e)
     except Exception:
         log.exception("language model unavailable; running on rules only")
-    return server, understander
+    return server, understander, None
 
 
 def _watch_load(runtime: Runtime, degrader: Degrader) -> Work:

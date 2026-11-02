@@ -9,7 +9,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        # macos-14 is Apple Silicon: the Mac version's first target.
+        os: [windows-latest, ubuntu-latest, macos-14]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

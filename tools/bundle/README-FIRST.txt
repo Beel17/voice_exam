@@ -37,6 +37,17 @@ To run the exam again from the beginning, close the black window and double-clic
 If the page was closed by mistake, double-click "Open the exam page again". The exam
 carries on where it was.
 
+Optional: run it as a Windows service, as an exam centre would. Double-click
+"Install as a Windows service" and allow the Windows prompt (it needs administrator
+rights). The service then starts by itself with the PC, with no black window, and
+restarts itself if it ever stops; open the exam page with "Open the exam page again".
+It uses voice 1. To go back to the black window, run "Remove the Windows service".
+
+"Show the service status" opens a page, for whoever looks after the exam, saying in
+plain words whether everything is working. Above all it shows any answers still waiting
+to reach the exam platform: they are kept safely on this PC and sent automatically while
+the service runs. Never delete the folder, or run "Start over", while any are waiting.
+
 
 For the tester
 --------------

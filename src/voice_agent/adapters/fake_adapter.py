@@ -2,12 +2,20 @@
 
 It follows the adapter contract exactly (the conformance suite runs against it) and can
 also fail the ways a real platform does, so outbox and resume logic can be tested.
+
+With a state folder it behaves like a platform on another machine: what it has saved
+outlives the service (a service killed mid-exam must find its saves still there), and
+two files there switch failures on from outside, for drills: ``platform-down`` makes
+every call fail, and ``platform-slow`` (holding a number of seconds) delays every call.
 """
 
+import asyncio
+import json
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from importlib import resources
+from pathlib import Path
 from typing import Self
 
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -73,9 +81,14 @@ class _Candidate:
 
 class FakeAdapter:
     def __init__(
-        self, exams: Iterable[FixtureExam], clock: Callable[[], float] = time.monotonic
+        self,
+        exams: Iterable[FixtureExam],
+        clock: Callable[[], float] = time.monotonic,
+        state_dir: Path | None = None,
     ) -> None:
-        self._clock = clock
+        # Saved state outlives this process, so its times must too: wall-clock time.
+        self._clock = time.time if state_dir is not None and clock is time.monotonic else clock
+        self._state_dir = state_dir
         self._exams_by_code: dict[str, FixtureExam] = {}
         self._exams_by_id: dict[str, FixtureExam] = {}
         self._registrations: dict[tuple[str, str], str] = {}
@@ -94,10 +107,16 @@ class FakeAdapter:
         # platform saved but the reply was lost on the network.
         self.unavailable = False
         self.lose_next_acks = 0
+        if state_dir is not None:
+            state_dir.mkdir(parents=True, exist_ok=True)
+            self._load()
 
     @classmethod
     def with_bundled_fixtures(
-        cls, clock: Callable[[], float] = time.monotonic, load_candidates: int = 0
+        cls,
+        clock: Callable[[], float] = time.monotonic,
+        load_candidates: int = 0,
+        state_dir: Path | None = None,
     ) -> Self:
         """The bundled exams. ``load_candidates`` registers that many more candidates for
         the sample exam (reg_no ``LOAD00001`` and up), for load tests and benchmarks."""
@@ -109,11 +128,50 @@ class FakeAdapter:
                 for k in range(1, load_candidates + 1)
             )
             exams[0] = sample.model_copy(update={"candidates": sample.candidates + extra})
-        return cls(exams, clock)
+        return cls(exams, clock, state_dir)
 
-    def _check_available(self) -> None:
+    async def _enter(self) -> None:
+        """Every call starts here: the failure switches, set in code or from outside."""
         if self.unavailable:
             raise AdapterUnavailable("fake platform is down")
+        if self._state_dir is None:
+            return
+        if (self._state_dir / "platform-down").exists():
+            raise AdapterUnavailable("fake platform is down (platform-down)")
+        slow = self._state_dir / "platform-slow"
+        if slow.exists():
+            await asyncio.sleep(float(slow.read_text(encoding="ascii").strip() or 0))
+
+    def _load(self) -> None:
+        assert self._state_dir is not None
+        path = self._state_dir / "platform.json"
+        if not path.exists():
+            return
+        for candidate_id, saved in json.loads(path.read_text(encoding="utf-8")).items():
+            if (c := self._candidates.get(candidate_id)) is None:
+                continue
+            c.started_at = saved["started_at"]
+            c.answers = {int(n): letter for n, letter in saved["answers"].items()}
+            c.submitted = saved["submitted"]
+            c.operations = {op: tuple(v) for op, v in saved["operations"].items()}
+
+    def _store(self) -> None:
+        """Write what the platform holds, atomically: a kill mid-write leaves the old copy."""
+        if self._state_dir is None:
+            return
+        state = {
+            candidate_id: {
+                "started_at": c.started_at,
+                "answers": c.answers,
+                "submitted": c.submitted,
+                "operations": c.operations,
+            }
+            for candidate_id, c in self._candidates.items()
+            if c.started_at is not None
+        }
+        temporary = self._state_dir / "platform.json.tmp"
+        temporary.write_text(json.dumps(state), encoding="utf-8")
+        temporary.replace(self._state_dir / "platform.json")
 
     def _ack(self) -> None:
         if self.lose_next_acks > 0:
@@ -139,34 +197,35 @@ class FakeAdapter:
             raise AdapterRejected(RejectReason.NO_SUCH_EXAM) from None
 
     async def verify_candidate(self, reg_no: str, exam_code: str) -> CandidateSession:
-        self._check_available()
+        await self._enter()
         candidate_id = self._registrations.get((reg_no, exam_code))
         if candidate_id is None:
             raise AdapterRejected(RejectReason.NOT_REGISTERED)
         c = self._candidates[candidate_id]
         if c.started_at is None:  # verifying again on resume does not restart the clock
             c.started_at = self._clock()
+            self._store()
         return CandidateSession(candidate_id=candidate_id, exam_id=c.exam.exam_id)
 
     async def get_exam_outline(self, exam_id: str) -> ExamOutline:
-        self._check_available()
+        await self._enter()
         return self._exam(exam_id).outline
 
     async def get_question(self, exam_id: str, n: int) -> Question:
-        self._check_available()
+        await self._enter()
         exam = self._exam(exam_id)
         if not 1 <= n <= exam.outline.question_count:
             raise AdapterRejected(RejectReason.NO_SUCH_QUESTION)
         return exam.questions[n - 1]
 
     async def get_saved_answers(self, candidate_id: str) -> SavedAnswers:
-        self._check_available()
+        await self._enter()
         return SavedAnswers(answers=dict(self._candidate(candidate_id).answers))
 
     async def save_answer(
         self, candidate_id: str, n: int, choice: OptionLetter | None, operation_id: str
     ) -> None:
-        self._check_available()
+        await self._enter()
         c = self._candidate(candidate_id)
         op: _SaveOp = ("save", n, choice)
         if (seen := c.operations.get(operation_id)) is not None:
@@ -187,14 +246,15 @@ class FakeAdapter:
         else:
             c.answers[n] = choice
         c.operations[operation_id] = op
+        self._store()
         self._ack()
 
     async def get_time_left(self, candidate_id: str) -> int:
-        self._check_available()
+        await self._enter()
         return self._time_left(self._candidate(candidate_id))
 
     async def submit(self, candidate_id: str, operation_id: str) -> None:
-        self._check_available()
+        await self._enter()
         c = self._candidate(candidate_id)
         op: _SubmitOp = ("submit",)
         if (seen := c.operations.get(operation_id)) is not None:
@@ -205,4 +265,5 @@ class FakeAdapter:
             raise AdapterRejected(RejectReason.ALREADY_SUBMITTED)
         c.submitted = True
         c.operations[operation_id] = op
+        self._store()
         self._ack()

@@ -77,3 +77,27 @@ def test_the_zip_leaves_out_what_a_run_left_behind(tmp_path: Path) -> None:
             "voice-exam/lib/voice_agent/main.py",
             "voice-exam/run-service.bat",
         ]
+
+
+def test_the_windows_service_definition() -> None:
+    import xml.etree.ElementTree as ET
+
+    service = ET.fromstring(make_bundle.SERVICE_XML)
+    assert service.findtext("id") == make_bundle.SERVICE_ID
+    # Runs the bundled Python on the service, from this folder, with the centre's config.
+    assert service.findtext("executable") == r"%BASE%\python\python.exe"
+    assert service.findtext("arguments") == "-m voice_agent"
+    env = {e.get("name"): e.get("value") for e in service.findall("env")}
+    assert env["VOICE_AGENT_CONFIG"] == r"%BASE%\config\centre.toml"
+    assert env["PYTHONNOUSERSITE"] == "1" and r"%BASE%\lib" in (env["PYTHONPATH"] or "")
+    # Starts with the PC, and Windows starts it again if it stops.
+    assert service.findtext("startmode") == "Automatic"
+    assert [f.get("action") for f in service.findall("onfailure")] == ["restart"] * 3
+    # The install script asks for administrator rights itself, and installs then starts.
+    install = make_bundle.SCRIPTS["Install as a Windows service.bat"]
+    assert "-Verb RunAs" in install
+    exe = make_bundle.SERVICE_EXE
+    assert install.index(f"{exe} install") < install.index(f"{exe} start")
+    # A running service and a black window would fight over the port: the start scripts
+    # just open the page when the service is running.
+    assert make_bundle.IF_SERVICE_RUNNING in make_bundle.SCRIPTS["run-service.bat"]

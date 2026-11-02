@@ -14,8 +14,6 @@ a centre's real set-up issues its own tokens.
 """
 
 import argparse
-import hashlib
-import secrets
 import shutil
 import subprocess
 import sys
@@ -23,13 +21,65 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from tools.setup_centre import write_config
+
 ROOT = Path(__file__).parents[1]
 PYTHON = "3.12"
 LANGUAGE_MODEL = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
 # Downloads are already unpacked; the small model is only for comparison on slow PCs; and
 # llama.cpp's released server is replaced by the self-contained build in llama-server/
 # (tools/build_llama.py), which needs no C++ runtime on the PC.
-LEAVE_OUT_OF_MODELS = {"downloads", "qwen2.5-0.5b-instruct-q4_k_m.gguf", "llama.cpp"}
+LEAVE_OUT_OF_MODELS = {"downloads", "qwen2.5-0.5b-instruct-q4_k_m.gguf", "llama.cpp", "winsw"}
+# WinSW runs the service as a Windows service: the program is renamed after the service and
+# finds its settings in the .xml file of the same name beside it.
+SERVICE_EXE = "voice-exam-service.exe"
+SERVICE_ID = "VoiceExam"
+
+
+def service_xml(logs: str, config: str) -> str:
+    """WinSW's settings for the service, logging to ``logs``, configured by ``config``."""
+    return rf"""<!-- The voice exam service as a Windows service (WinSW 2); %BASE% is here. -->
+<service>
+  <id>{SERVICE_ID}</id>
+  <name>Voice Exam</name>
+  <description>Offline voice service for blind candidates taking computer-based exams.</description>
+  <executable>%BASE%\python\python.exe</executable>
+  <arguments>-m voice_agent</arguments>
+  <workingdirectory>%BASE%</workingdirectory>
+  <env name="PYTHONPATH" value="%BASE%\lib;%BASE%" />
+  <env name="PYTHONNOUSERSITE" value="1" />
+  <env name="PYTHONUTF8" value="1" />
+  <env name="VOICE_AGENT_CONFIG" value="{config}" />
+  <!-- Starts with the PC; if it stops, Windows starts it again (and again, more slowly). -->
+  <startmode>Automatic</startmode>
+  <onfailure action="restart" delay="5 sec" />
+  <onfailure action="restart" delay="30 sec" />
+  <onfailure action="restart" delay="2 min" />
+  <resetfailure>1 hour</resetfailure>
+  <!-- Asked to stop, it shuts down cleanly (the model server with it) or is ended. -->
+  <stoptimeout>20 sec</stoptimeout>
+  <logpath>{logs}</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+</service>
+"""
+
+
+SERVICE_XML = service_xml(
+    r"%BASE%\data\logs", r"%BASE%\config\centre.toml"
+)  # the test bundle: logs beside it
+# Run as administrator: the script starts itself again with Windows' permission prompt.
+ELEVATE = r"""@echo off
+cd /d "%~dp0"
+net session >nul 2>&1
+if errorlevel 1 (
+  powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+  exit /b
+)
+"""
+IF_SERVICE_RUNNING = rf"""sc query {SERVICE_ID} 2>nul | find "RUNNING" >nul"""
 TOOLS = [
     "__init__.py",
     "bench.py",
@@ -39,6 +89,7 @@ TOOLS = [
     "open_client.py",
     "export_sessions.py",
     "diagnose_model.py",
+    "setup_centre.py",
 ]
 SKIP = shutil.ignore_patterns("__pycache__", "*.pyc")
 # What running the bundle leaves behind; never part of a copy for someone else.
@@ -60,6 +111,13 @@ set PYTHONUTF8=1
 SCRIPTS = {
     # run-service.bat [voice folder]: the service in this window, the exam page when ready.
     "run-service.bat": ENV
+    + rf"""{IF_SERVICE_RUNNING} && (
+  echo The voice exam service is already running as a Windows service: opening the page.
+  start "" http://127.0.0.1:8765/
+  timeout /t 5 >nul
+  exit /b
+)
+"""
     + r"""if not "%~1"=="" set VOICE_AGENT_SPEECH__VOICE_DIR=models/speech/tts/%~1
 echo Starting the voice exam service. Leave this window open; close it to stop.
 echo The exam page opens by itself when the service is ready.
@@ -70,19 +128,29 @@ pause
     "Open the exam page again.bat": """@echo off
 start "" http://127.0.0.1:8765/
 """,
+    "Show the service status.bat": """@echo off
+start "" http://127.0.0.1:8765/status
+""",
     "Collect feedback.bat": ENV
     + r"""if not exist feedback mkdir feedback
 "%~dp0python\python.exe" -m tools.export_sessions --data data --out feedback
 if not exist feedback\FEEDBACK-FORM.txt copy FEEDBACK-FORM.txt feedback\ >nul
 if exist bench-report.json copy /y bench-report.json feedback\ >nul
 if exist model-diagnosis.txt copy /y model-diagnosis.txt feedback\ >nul
+if exist data\logs\*.log copy /y data\logs\*.log feedback\ >nul
 echo.
 echo Fill in feedback\FEEDBACK-FORM.txt, then send the whole feedback folder back.
 start "" explorer "%~dp0feedback"
 pause
 """,
-    "Start over (delete test sessions).bat": """@echo off
+    "Start over (delete test sessions).bat": rf"""@echo off
 cd /d "%~dp0"
+{IF_SERVICE_RUNNING} && (
+  echo The voice exam service is running as a Windows service. Run "Remove the Windows
+  echo service" first, then this again.
+  pause
+  exit /b
+)
 echo This deletes every test session on this PC, so each candidate starts afresh.
 echo Close the service window first. Collect feedback first if you have not.
 choice /m "Delete the test sessions"
@@ -107,6 +175,27 @@ echo.
 echo Done. "Collect feedback" adds bench-report.json to the feedback folder.
 pause
 """,
+    "Install as a Windows service.bat": ELEVATE
+    + rf"""echo Installing the voice exam service: it will start with this PC, in the background,
+echo and restart itself if it ever stops. Close any black service window first.
+{SERVICE_EXE} install || goto failed
+{SERVICE_EXE} start || goto failed
+echo.
+echo Installed and started. Open the exam page with "Open the exam page again".
+pause
+exit /b
+:failed
+echo.
+echo It did not work; the lines above say why.
+pause
+""",
+    "Remove the Windows service.bat": ELEVATE
+    + rf"""{SERVICE_EXE} stop
+{SERVICE_EXE} uninstall
+echo.
+echo The service is removed. The folder and its test sessions are kept.
+pause
+""",
 } | {
     f"Start exam - {name}.bat": f'@echo off\ncall "%~dp0run-service.bat" {folder}\n'
     for name, folder in VOICES.items()
@@ -128,6 +217,8 @@ def main() -> None:
         raise SystemExit("models are missing: run tools/fetch_models.py first")
     if not (ROOT / "models" / "llama-server" / "llama-server.exe").is_file():
         raise SystemExit("the model server is missing: run tools/build_llama.py first")
+    if not (ROOT / "models" / "winsw" / "WinSW-x64.exe").is_file():
+        raise SystemExit("WinSW is missing: run tools/fetch_models.py first")
     out.mkdir(parents=True)
 
     print("python ...", flush=True)
@@ -148,6 +239,8 @@ def main() -> None:
     )
     print("configuration ...", flush=True)
     _write_config(out)
+    shutil.copy2(ROOT / "models" / "winsw" / "WinSW-x64.exe", out / SERVICE_EXE)
+    (out / SERVICE_EXE).with_suffix(".xml").write_text(SERVICE_XML, encoding="utf-8")
     texts = {
         n: (TEXTS / n).read_text(encoding="utf-8")
         for n in ("README-FIRST.txt", "FEEDBACK-FORM.txt")
@@ -224,14 +317,11 @@ def _install_libraries(python: Path, lib: Path) -> None:
 
 
 def _write_config(out: Path) -> None:
-    token = secrets.token_urlsafe(32)
-    digest = hashlib.sha256(token.encode()).hexdigest()
-    example = (ROOT / "config" / "centre.example.toml").read_text(encoding="utf-8")
-    assert "device_token_sha256 = []" in example
-    config = example.replace("device_token_sha256 = []", f'device_token_sha256 = ["{digest}"]')
+    """The test bundle's configuration: data beside the program, the token in its folder."""
     (out / "config").mkdir()
-    (out / "config" / "centre.toml").write_text(config, encoding="utf-8")
-    (out / "DEVICE-TOKEN.txt").write_text(token + "\n", encoding="ascii")
+    shutil.copy2(ROOT / "config" / "centre.example.toml", out / "config")
+    config = out / "config"
+    write_config(config / "centre.example.toml", config / "centre.toml", out / "DEVICE-TOKEN.txt")
 
 
 if __name__ == "__main__":

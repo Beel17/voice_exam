@@ -67,3 +67,5 @@ ignore_missing_imports = true
 "src/voice_agent/speech/speakable.py" = ["RUF001"]
 "tests/unit/test_speakable.py" = ["RUF001"]
 "tests/integration/test_synthesis.py" = ["RUF001"]
+# It writes an Inno Setup script, in which every entry is one line however long.
+"tools/make_installer.py" = ["E501"]

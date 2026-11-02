@@ -18,7 +18,9 @@ no unbounded queue.
 
 import asyncio
 import ctypes
+import platform
 import re
+import subprocess
 import sys
 import time
 from collections.abc import Callable, Sequence
@@ -296,13 +298,26 @@ def describe_exit(code: int) -> str:
     return f"exit code {shown}" + (f": {meaning}" if meaning else "")
 
 
-def cpu_has_avx2() -> bool:
-    """Whether this processor has AVX2 (most PCs since about 2013)."""
+def cpu_can_run_model() -> bool:
+    """Whether this processor can run the language model fast enough to help. On x86 that
+    takes AVX2 (most PCs since about 2013: without it, answers took 9 s, not 0.7 s); ARM
+    processors such as Apple Silicon have their own vector instructions, always present."""
+    if platform.machine().lower() in ("arm64", "aarch64"):
+        return True
     if sys.platform == "win32":
         pf_avx2_instructions_available = 40
         return bool(
             ctypes.windll.kernel32.IsProcessorFeaturePresent(pf_avx2_instructions_available)
         )
+    if sys.platform == "darwin":  # an Intel Mac
+        try:
+            features = subprocess.run(
+                ["sysctl", "-n", "machdep.cpu.leaf7_features"],
+                capture_output=True, text=True, timeout=5, check=True,
+            ).stdout  # fmt: skip
+        except (OSError, subprocess.SubprocessError):
+            return True  # cannot tell: try, and let the timeouts decide
+        return "AVX2" in features.upper().split()
     try:
         return " avx2" in Path("/proc/cpuinfo").read_text("ascii", errors="replace")
     except OSError:
@@ -325,6 +340,7 @@ class LlamaServer:
         self._process: asyncio.subprocess.Process | None = None
         self.restarts = 0
         self.failures = 0  # starts that failed in a row
+        self.last_failure: str | None = None  # why the last start failed, in brief
         self._next_try = 0.0  # monotonic time before which no restart is attempted
 
     @property
@@ -337,10 +353,10 @@ class LlamaServer:
         log_start = self._log_path.stat().st_size if self._log_path.exists() else 0
         with self._log_path.open("ab") as log:
             self._process = await asyncio.create_subprocess_exec(
-                *self._command,
+                *children.command_for(self._command),
                 stdout=log,
                 stderr=log,
-                stdin=asyncio.subprocess.DEVNULL,
+                stdin=children.stdin_for(),
                 preexec_fn=children.before_exec(),
             )
         children.bind_to_this_process(self._process.pid)
@@ -348,15 +364,19 @@ class LlamaServer:
             deadline = time.monotonic() + self._ready_timeout
             while time.monotonic() < deadline:
                 if not self.running:
-                    raise self._failed(log_start)
+                    failed = self._failed(log_start)
+                    self.last_failure = str(failed).split(". Its last output", 1)[0]
+                    raise failed
                 try:
                     if (await http.get("/health", timeout=1.0)).status_code == 200:
+                        self.last_failure = None
                         return
                 except httpx.HTTPError:
                     pass
                 await asyncio.sleep(0.1)
         await self.stop()
-        raise ModelServerFailed(f"model server not ready after {self._ready_timeout} s")
+        self.last_failure = f"model server not ready after {self._ready_timeout:.0f} s"
+        raise ModelServerFailed(self.last_failure)
 
     def _failed(self, log_start: int) -> ModelServerFailed:
         """Why the server exited: its exit code, and what it wrote this time, if anything

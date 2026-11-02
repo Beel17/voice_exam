@@ -46,7 +46,7 @@ async def test_verify_returns_the_same_ids_every_time(
     assert first == again
     other = await verify(adapter, profile, profile.other_reg_no)
     assert other.candidate_id != first.candidate_id
-    assert other.exam_id == first.exam_id
+    # Their exam IDs may differ: a platform may give each candidate their own version.
 
 
 async def test_verify_refuses_unregistered_candidates(
