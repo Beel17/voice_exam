@@ -46,7 +46,22 @@ uv run python -m tools.fetch_models
 ```
 
 It downloads pinned versions of the llama.cpp server and the Qwen2.5 models, checks each
-against its published SHA-256, and writes `models/manifest.json`. At start-up the service
+against its published SHA-256, and writes `models/manifest.json`.
+
+Then build the server the service actually runs (needs git and Visual Studio Build Tools
+with the C++ workload, once, on the build machine):
+
+```bash
+uv run python -m tools.build_llama
+```
+
+llama.cpp's released Windows server uses the PC's own C++ runtime and crashes at once
+where that is older than it expects (a work PC with a 2018 runtime did). This builds the
+same pinned version as two self-contained programs in `models/llama-server/`, one using
+AVX2 and `llama-server-compat.exe` for older processors, checks that neither loads any
+runtime DLL, and updates the manifest. The service picks the one the processor can run.
+
+At start-up the service
 verifies the files it uses against the manifest, starts the model on 127.0.0.1, warms it,
 and restarts it if it dies. If anything is missing or does not match, it logs why and
 runs the exam on rules only.

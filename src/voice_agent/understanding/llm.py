@@ -17,7 +17,9 @@ no unbounded queue.
 """
 
 import asyncio
+import ctypes
 import re
+import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -292,6 +294,19 @@ def describe_exit(code: int) -> str:
     meaning = _WINDOWS_EXITS.get(unsigned)
     shown = f"0x{unsigned:08X}" if unsigned > 0xFFFF else str(code)
     return f"exit code {shown}" + (f": {meaning}" if meaning else "")
+
+
+def cpu_has_avx2() -> bool:
+    """Whether this processor has AVX2 (most PCs since about 2013)."""
+    if sys.platform == "win32":
+        pf_avx2_instructions_available = 40
+        return bool(
+            ctypes.windll.kernel32.IsProcessorFeaturePresent(pf_avx2_instructions_available)
+        )
+    try:
+        return " avx2" in Path("/proc/cpuinfo").read_text("ascii", errors="replace")
+    except OSError:
+        return True
 
 
 class LlamaServer:

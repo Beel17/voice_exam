@@ -163,19 +163,25 @@ def main() -> None:
     work_root.mkdir(parents=True, exist_ok=True)
     folder = shipped.parent
     available = set(builds(folder))
-    older = available - AVX512_BUILDS
-    tries = [
-        ("as shipped", folder, []),
-        ("as shipped, no weight repacking", folder, ["--no-repack"]),
-        ("as shipped, model read into memory (no mmap)", folder, ["--load-mode", "none"]),
-        ("without the AVX-512 engine builds", work_root / "no-avx512", older),
-        ("basic engine build only (x64)", work_root / "x64-only", {"x64"}),
+    # (title, server program, extra arguments, CPU engine builds to keep, if any)
+    tries: list[tuple[str, Path, list[str], set[str] | None]] = [
+        (f"{exe.name}, as shipped", exe, [], None)
+        for exe in sorted(folder.glob("llama-server*.exe"))
     ]
+    tries += [
+        ("as shipped, no weight repacking", shipped, ["--no-repack"], None),
+        ("as shipped, model read into memory (no mmap)", shipped, ["--load-mode", "none"], None),
+    ]
+    if available:  # llama.cpp's released layout: one DLL per processor family
+        tries += [
+            ("without the AVX-512 engine builds", shipped, [], available - AVX512_BUILDS),
+            ("basic engine build only (x64)", shipped, [], {"x64"}),
+        ]
     report = [
         "Voice exam: language model diagnosis",
         f"machine: {machine()}",
         f"llama.cpp folder: {folder}",
-        f"engine builds shipped: {', '.join(sorted(available))}",
+        f"engine builds shipped: {', '.join(sorted(available)) or '(built in)'}",
         "",
     ]
     print("\n".join(report), flush=True)
@@ -185,14 +191,13 @@ def main() -> None:
         block = [f"bare run {' '.join(args)}: " + bare_run(shipped, args), ""]
         print("\n".join(block), flush=True)
         report += block
-    for n, (title, where, how) in enumerate(tries, start=1):
+    for n, (title, exe, extra, keep) in enumerate(tries, start=1):
         print(f"{n}/{len(tries)} {title} ...", flush=True)
-        extra: list[str] = how if isinstance(how, list) else []
-        if isinstance(how, set):
-            where = copy_with_builds(folder, where, how)
+        if keep is not None:
+            exe = copy_with_builds(folder, work_root / f"builds-{n}", keep) / exe.name
         work = work_root / f"try-{n}"
         work.mkdir(exist_ok=True)
-        lines = attempt(where / shipped.name, model, extra, work, 8790 + n)
+        lines = attempt(exe, model, extra, work, 8790 + n)
         block = [f"{n}. {title}: {lines[0]}", *(f"   {line}" for line in lines[1:]), ""]
         print("\n".join(block), flush=True)
         report += block

@@ -29,6 +29,7 @@ from voice_agent.understanding.llm import (
     LlamaServer,
     LlmUnderstander,
     ModelServerFailed,
+    cpu_has_avx2,
     llama_server_command,
 )
 
@@ -213,6 +214,13 @@ async def _start_language_model(
             cfg.model_file,
         )
         return None, None
+    if not cpu_has_avx2():
+        # The server is built for AVX2; without it, measured answers took 9 s, not 0.7 s.
+        log.warning(
+            "this processor lacks AVX2, which the language model needs to answer in time; "
+            "running on rules only"
+        )
+        return None, None
     began = time.perf_counter()
     problems = await asyncio.to_thread(
         selfcheck.model_file_problems, settings.models_dir, Path(binary), cfg.model_file
@@ -222,7 +230,11 @@ async def _start_language_model(
             log.error("model check failed: %s", problem)
         log.error("language model not used; running on rules only")
         return None, None
-    log.info("model files verified in %.1f s", time.perf_counter() - began)
+    log.info(
+        "model files verified in %.1f s; server %s",
+        time.perf_counter() - began,
+        Path(binary).name,
+    )
     command = llama_server_command(
         Path(binary),
         cfg.model_file,

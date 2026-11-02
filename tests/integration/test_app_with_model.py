@@ -209,3 +209,13 @@ async def test_the_load_watch_moves_the_level() -> None:
     rt.manager.refusals = 3  # running, but overloaded
     await watch()
     assert rt.manager.current() is Level.RULES_ONLY
+
+
+def test_a_processor_without_avx2_runs_on_rules_only(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import voice_agent.main as main_module
+
+    monkeypatch.setattr(main_module, "cpu_has_avx2", lambda: False)
+    with TestClient(create_app(settings)) as client:
+        assert client.get("/readyz").json()["language_model"] != "running"

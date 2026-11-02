@@ -1,5 +1,6 @@
 {
   "files": {
+    "llama-server/llama-server.exe": "a79ba384420301458a6e0f23e56ca24443184d038237baa1b1d8b2951d9cbd1b",
     "llama.cpp/ggml-base.dll": "726d6eb4dd064ac14ae78f9a1f5f29056b6201e2ee11bbea9ca579b1df6eaf24",
     "llama.cpp/ggml-cpu-alderlake.dll": "4c257ab7ac2fac52cd1839883e28b9e33596798489a78acc86232ad0edbf5074",
     "llama.cpp/ggml-cpu-cannonlake.dll": "e0be46d76c3c935a6c1f6d5485117638d393e57cf7d1cc4cb159af985a27e7a4",

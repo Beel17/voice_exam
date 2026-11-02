@@ -26,8 +26,10 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 PYTHON = "3.12"
 LANGUAGE_MODEL = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
-# Downloads are already unpacked; the small model is only for comparison on slow PCs.
-LEAVE_OUT_OF_MODELS = {"downloads", "qwen2.5-0.5b-instruct-q4_k_m.gguf"}
+# Downloads are already unpacked; the small model is only for comparison on slow PCs; and
+# llama.cpp's released server is replaced by the self-contained build in llama-server/
+# (tools/build_llama.py), which needs no C++ runtime on the PC.
+LEAVE_OUT_OF_MODELS = {"downloads", "qwen2.5-0.5b-instruct-q4_k_m.gguf", "llama.cpp"}
 TOOLS = [
     "__init__.py",
     "bench.py",
@@ -124,6 +126,8 @@ def main() -> None:
     model = ROOT / "models" / LANGUAGE_MODEL
     if not model.is_file():
         raise SystemExit("models are missing: run tools/fetch_models.py first")
+    if not (ROOT / "models" / "llama-server" / "llama-server.exe").is_file():
+        raise SystemExit("the model server is missing: run tools/build_llama.py first")
     out.mkdir(parents=True)
 
     print("python ...", flush=True)

@@ -20,7 +20,7 @@ max_utterance_chars = 300
 [llm]
 # Set enabled = false to run on rules only (no language model at all).
 enabled = true
-server_binary = "models/llama.cpp/llama-server"
+server_binary = "models/llama-server/llama-server"
 model_file = "models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
 # threads = 4   # leave unset: most of the cores in PC mode, 2 per slot in server mode
 slots = 1

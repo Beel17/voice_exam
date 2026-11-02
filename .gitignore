@@ -7,6 +7,7 @@ __pycache__/
 .coverage
 htmlcov/
 dist/
+build/
 
 # Model files ship in the package, never in git; only their checksums are tracked.
 models/*
