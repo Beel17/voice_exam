@@ -74,6 +74,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "sample":
+        args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_bytes(write_package(sample_package()))
         print(f"written: {args.out}")
         return

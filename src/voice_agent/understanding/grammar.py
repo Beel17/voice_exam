@@ -199,6 +199,16 @@ def _clear(m: re.Match[str]) -> i.Intent | None:
     return i.ClearAnswer(args=i.MaybeQuestionArgs(question=n))
 
 
+def _flag(m: re.Match[str]) -> i.Intent | None:
+    n = _number(m)
+    return None if n == 0 else i.Flag(args=i.MaybeQuestionArgs(question=n))
+
+
+def _unflag(m: re.Match[str]) -> i.Intent | None:
+    n = _number(m)
+    return None if n == 0 else i.Unflag(args=i.MaybeQuestionArgs(question=n))
+
+
 def _review(m: re.Match[str]) -> i.Intent | None:
     n = _number(m)
     return i.ReviewAnswers(args=i.MaybeQuestionArgs(question=n)) if n else None
@@ -377,6 +387,30 @@ _RULES: Final[list[_Rule]] = [
         rf"what did i (?:put|choose|pick|answer|select|mark)(?: for| in| on)? {QN}",
         rf"what is my answer (?:for|to|on) {QN}",
         rf"review {QN}",
+    ),
+    # Revisiting ("mark B" answers; marking a question needs words saying why).
+    *_rules(
+        _flag,
+        rf"flag(?: it| this| this one| this question| {QN})?"
+        rf"(?: for (?:review|revisit|later)| to (?:revisit|come back to))?",
+        rf"mark (?:it|this|this one|this question|{QN})"
+        rf" (?:for (?:review|revisit|later)|to (?:revisit|come back to)|as flagged)",
+        r"(?:i will )?(?:revisit|come back to) (?:it|this|this one|this question)(?: later)?",
+        r"(?:revisit|come back to it|come back to this) later",
+    ),
+    *_rules(
+        _unflag,
+        rf"(?:unflag|unmark)(?: it| this| this one| this question| {QN})?",
+        rf"(?:remove|clear|delete) (?:the )?(?:flag|mark)"
+        rf"(?: (?:from|on) (?:it|this|this one|this question|{QN}))?",
+    ),
+    *_rules(
+        i.ListFlagged(),
+        r"(?:which|what) (?:questions |ones |numbers )?(?:are|have i|did i) (?:flagged|marked"
+        r"|flag|mark)(?: for review| to revisit)?|(?:list|read|tell me)(?: the| my)? flagged"
+        r"(?: questions| ones)?|flagged(?: questions| ones)?|(?:my )?flags"
+        r"|(?:which|what) (?:questions |ones )?(?:do i need|did i want|should i) to "
+        r"(?:revisit|come back to)",
     ),
     # Listening comfort.
     *_rules(

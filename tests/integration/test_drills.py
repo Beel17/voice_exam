@@ -9,7 +9,12 @@ from tools import drills
 
 @pytest.mark.parametrize(
     "drill",
-    [drills.killed_mid_exam, drills.platform_down_at_save, drills.connection_dropped_mid_turn],
+    [
+        drills.killed_mid_exam,
+        drills.platform_down_at_save,
+        drills.connection_dropped_mid_turn,
+        drills.results_reach_the_cloud,
+    ],
     ids=lambda d: d.__name__,
 )
 async def test_the_service_recovers(drill: drills.Drill) -> None:

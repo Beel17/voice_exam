@@ -10,7 +10,8 @@ from dataclasses import dataclass
 from typing import Literal, assert_never
 
 from voice_agent.adapters.base import OPTION_LETTERS, Question, RejectReason
-from voice_agent.contract import OptionLetter, SayKind
+from voice_agent.contract import GuideStep, OptionLetter, SayKind
+from voice_agent.understanding.spelling import read_back
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +66,33 @@ class IdentifyPrompt:
 @dataclass(frozen=True, slots=True)
 class NotRegistered:
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class GuideSays:
+    """A step of the audio-mode welcome, before sign-in."""
+
+    step: GuideStep
+
+
+@dataclass(frozen=True, slots=True)
+class MicHeard:
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class ConfirmExamNumber:
+    code: str
+
+
+@dataclass(frozen=True, slots=True)
+class ExamNumberNotHeard:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class SignedInAs:
+    full_name: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,6 +305,30 @@ class OutOfScope:
 
 
 @dataclass(frozen=True, slots=True)
+class Flagged:
+    question: int
+    already: bool
+
+
+@dataclass(frozen=True, slots=True)
+class Unflagged:
+    question: int
+    was_flagged: bool
+
+
+@dataclass(frozen=True, slots=True)
+class FlaggedList:
+    questions: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class NotOnScreen:
+    """A click for a question other than the one now current (the screen was behind)."""
+
+    question: int
+
+
+@dataclass(frozen=True, slots=True)
 class ConfirmSubmit:
     answered: int
     unanswered: int
@@ -331,6 +383,11 @@ TemplateReply = (
     | NothingHeard
     | PracticeEnded
     | NotRegistered
+    | GuideSays
+    | MicHeard
+    | ConfirmExamNumber
+    | ExamNumberNotHeard
+    | SignedInAs
     | PlatformUnavailable
     | Welcome
     | WelcomeBack
@@ -363,6 +420,10 @@ TemplateReply = (
     | Help
     | NotUnderstood
     | OutOfScope
+    | Flagged
+    | Unflagged
+    | FlaggedList
+    | NotOnScreen
     | ConfirmSubmit
     | ConfirmSubmitFinal
     | NotSubmitted
@@ -457,11 +518,31 @@ HELP_TEXT = (
     "You can say: next, previous, or a question number to move. "
     "A letter, like B, to answer. Repeat, to hear the question again. "
     "Where am I, time left, or which questions are unanswered. "
+    "Flag, to mark a question to come back to. "
     "Faster or slower, to change my speed. Submit, when you are finished."
 )
+GUIDE_TEXT: dict[GuideStep, str] = {
+    "welcome": (
+        "Welcome to ExamSolution. This exam is spoken: I read each question and its "
+        "options, and you answer by voice or with the keyboard. To talk, hold the Space "
+        "bar while you speak, then let go. First, let us check your headphones. "
+        "Press Enter when you are ready."
+    ),
+    "left": "You should hear a sound in your left ear.",
+    "right": "And now in your right ear.",
+    "sound_check": (
+        "If you heard both sounds, press Enter. If not, raise your hand for the invigilator."
+    ),
+    "mic_check": ("Now your microphone. Hold Space, say: testing, one, two, three. Then let go."),
+    "sign_in": (
+        "Now sign in. Hold Space and say your examination number, one character at a "
+        "time. For letters you can say a word, like P for Papa."
+    ),
+}
 KEYBOARD_TEXT = (
     "You can also use the keyboard: number keys 1 to 5 choose an option, "
-    "Enter confirms, Escape cancels, and R repeats."
+    "Enter confirms, Escape cancels, R repeats, F flags a question, T tells the time "
+    "left, and S submits."
 )
 OUT_OF_SCOPE_TEXT = "I can only read the questions and options, and record your answers."
 
@@ -524,8 +605,33 @@ def _render_template(reply: TemplateReply) -> Spoken:
             )
         case NotRegistered():
             return Spoken(
-                "That registration number is not registered for this exam. "
+                "That examination number is not registered for an exam open now. "
                 "Please let the invigilator know.",
+                "prompt",
+            )
+        case GuideSays(step=step):
+            return Spoken(GUIDE_TEXT[step], "prompt")
+        case MicHeard(text=text):
+            return Spoken(
+                f"I heard: {text}. If that is about right, press Enter to go on. "
+                "If not, hold Space and try again.",
+                "prompt",
+            )
+        case ConfirmExamNumber(code=code):
+            return Spoken(
+                f"I heard: {read_back(code)}. Is that right? Say yes, or press Enter. "
+                "If not, say your number again.",
+                "confirm",
+            )
+        case ExamNumberNotHeard():
+            return Spoken(
+                "I did not catch a number. Hold Space and say your examination number, "
+                "one character at a time.",
+                "prompt",
+            )
+        case SignedInAs(full_name=name):
+            return Spoken(
+                f"You are signed in as {name}. If that is not you, tell the invigilator now.",
                 "prompt",
             )
         case PlatformUnavailable():
@@ -550,9 +656,9 @@ def _render_template(reply: TemplateReply) -> Spoken:
         case KeyboardMode():
             return Spoken(
                 "Voice is not available for a moment. Please use the keyboard: number keys "
-                "1 to 5 choose an option, Enter confirms, Escape cancels, R repeats, and N "
-                "and P move to the next and previous question. I will tell you when voice "
-                "is back.",
+                "1 to 5 choose an option, Enter confirms, Escape cancels, R repeats, N "
+                "and P move to the next and previous question, and S submits. I will tell "
+                "you when voice is back.",
                 "prompt",
             )
         case VoiceBack():
@@ -686,6 +792,21 @@ def _render_template(reply: TemplateReply) -> Spoken:
             return Spoken(f"{text} {KEYBOARD_TEXT}" if offer else text, "prompt")
         case OutOfScope():
             return Spoken(OUT_OF_SCOPE_TEXT, "prompt")
+        case Flagged(question=n, already=True):
+            return Spoken(f"Question {n} is already flagged to revisit.", "prompt")
+        case Flagged(question=n):
+            return Spoken(f"Question {n} flagged to revisit.", "prompt")
+        case Unflagged(question=n, was_flagged=False):
+            return Spoken(f"Question {n} is not flagged.", "prompt")
+        case Unflagged(question=n):
+            return Spoken(f"Flag removed from question {n}.", "prompt")
+        case FlaggedList(questions=()):
+            return Spoken("No questions are flagged to revisit.", "prompt")
+        case FlaggedList(questions=qs):
+            label = "Question" if len(qs) == 1 else "Questions"
+            return Spoken(f"{label} {_ranges(qs)} flagged to revisit.", "prompt")
+        case NotOnScreen(question=n):
+            return Spoken(f"Question {n} is not the current question. Nothing changed.", "prompt")
         case ConfirmSubmit(answered=answered, unanswered=unanswered):
             left = f" {_plural(unanswered, 'question')} not answered." if unanswered else ""
             return Spoken(
@@ -696,7 +817,7 @@ def _render_template(reply: TemplateReply) -> Spoken:
         case ConfirmSubmitFinal():
             return Spoken(
                 "Submitting is final. You cannot change any answer afterwards. "
-                "Say yes again to submit, or no to go back.",
+                "Say yes, submit, to submit your exam, or no to go back.",
                 "confirm",
             )
         case NotSubmitted():

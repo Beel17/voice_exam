@@ -7,7 +7,7 @@ being carried into the process.
 """
 
 from enum import StrEnum
-from typing import Annotated, Protocol, Self
+from typing import Annotated, Protocol, Self, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -96,6 +96,19 @@ class Question(_Model):
         return self
 
 
+class CandidateProfile(_Model):
+    """The candidate's own details, shown to them and the invigilator before the exam
+    starts so both can check that the right person is signed in."""
+
+    exam_number: Identifier
+    full_name: Annotated[str, StringConstraints(min_length=1, max_length=200)]
+    exam_title: Annotated[str, StringConstraints(max_length=200)] | None = None
+    seat: Annotated[str, StringConstraints(max_length=20)] | None = None
+    # Blind or visually impaired: the exam is meant to be taken by voice.
+    audio_mode: bool = False
+    has_photo: bool = False
+
+
 class SavedAnswers(_Model):
     """The candidate's own saved answers; unanswered questions are absent."""
 
@@ -158,3 +171,15 @@ class ExamDataAdapter(Protocol):
         ...
 
     async def submit(self, candidate_id: str, operation_id: str) -> None: ...
+
+
+@runtime_checkable
+class CandidateProfiles(Protocol):
+    """Optional, beside ``ExamDataAdapter``: a platform that can show candidates their
+    own details and photo for the identity check implements this too. Same errors."""
+
+    async def get_profile(self, candidate_id: str) -> CandidateProfile: ...
+
+    async def get_photo(self, candidate_id: str) -> bytes | None:
+        """A JPEG, or None when the platform holds no photo of this candidate."""
+        ...

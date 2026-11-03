@@ -1,0 +1,369 @@
+{
+  "components": {
+    "schemas": {
+      "BatchReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted": {
+            "items": {
+              "pattern": "^[A-Za-z0-9._:/-]{1,64}$",
+              "type": "string"
+            },
+            "title": "Accepted",
+            "type": "array"
+          }
+        },
+        "required": [
+          "accepted"
+        ],
+        "title": "BatchReceipt",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "PackageInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "exam_id": {
+            "pattern": "^[A-Za-z0-9._:/-]{1,64}$",
+            "title": "Exam Id",
+            "type": "string"
+          },
+          "package_id": {
+            "pattern": "^[A-Za-z0-9._:/-]{1,64}$",
+            "title": "Package Id",
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size": {
+            "maximum": 536870912.0,
+            "minimum": 1.0,
+            "title": "Size",
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 200,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "package_id",
+          "exam_id",
+          "title",
+          "sha256",
+          "size"
+        ],
+        "title": "PackageInfo",
+        "type": "object"
+      },
+      "PackageList": {
+        "additionalProperties": false,
+        "properties": {
+          "packages": {
+            "items": {
+              "$ref": "#/components/schemas/PackageInfo"
+            },
+            "title": "Packages",
+            "type": "array"
+          }
+        },
+        "required": [
+          "packages"
+        ],
+        "title": "PackageList",
+        "type": "object"
+      },
+      "ResultBatch": {
+        "additionalProperties": false,
+        "properties": {
+          "centre_id": {
+            "pattern": "^[A-Za-z0-9._:/-]{1,64}$",
+            "title": "Centre Id",
+            "type": "string"
+          },
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/ResultOperation"
+            },
+            "maxItems": 500,
+            "minItems": 1,
+            "title": "Operations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "centre_id",
+          "operations"
+        ],
+        "title": "ResultBatch",
+        "type": "object"
+      },
+      "ResultOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "title": "At",
+            "type": "number"
+          },
+          "candidate_id": {
+            "pattern": "^[A-Za-z0-9._:/-]{1,64}$",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "choice": {
+            "anyOf": [
+              {
+                "enum": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choice"
+          },
+          "exam_id": {
+            "pattern": "^[A-Za-z0-9._:/-]{1,64}$",
+            "title": "Exam Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "save",
+              "submit"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "operation_id": {
+            "pattern": "^[A-Za-z0-9._:/-]{1,64}$",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "question": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "operation_id",
+          "seq",
+          "candidate_id",
+          "exam_id",
+          "kind",
+          "at"
+        ],
+        "title": "ResultOperation",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "The sync API's messages, shared by the centre's client and the stand-in cloud.\n\nThe cloud implements three calls, all authenticated with the centre's bearer token:\n\n    GET  /v1/centres/{centre_id}/packages      the packages assigned to this centre\n    GET  /v1/packages/{package_id}             one package file (a zip; see examstore)\n    POST /v1/centres/{centre_id}/results       a batch of the centre's logged writes\n\nResults are the centre's log of operations, oldest first: every answer saved or cleared\nand every submission, against the paper's own question numbers and letters (never a\ncandidate's shuffled view). The cloud must accept an operation it has already received\n(same ``operation_id``, same content) as a success without applying it again, so a\ncentre can always retry a batch whose reply it lost. spec/sync.openapi.json is the\ngenerated description of this API.\n",
+    "title": "Voice exam sync API (stand-in cloud)",
+    "version": "1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/centres/{centre}/packages": {
+      "get": {
+        "operationId": "list_packages_v1_centres__centre__packages_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "centre",
+            "required": true,
+            "schema": {
+              "title": "Centre",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PackageList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Packages"
+      }
+    },
+    "/v1/centres/{centre}/results": {
+      "post": {
+        "operationId": "post_results_v1_centres__centre__results_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "centre",
+            "required": true,
+            "schema": {
+              "title": "Centre",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResultBatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Results"
+      }
+    },
+    "/v1/packages/{package_id}": {
+      "get": {
+        "operationId": "get_package_v1_packages__package_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "package_id",
+            "required": true,
+            "schema": {
+              "title": "Package Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Package"
+      }
+    }
+  }
+}

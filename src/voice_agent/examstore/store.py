@@ -98,6 +98,18 @@ class CandidateRow:
     submitted_at: float | None
 
 
+@dataclass(frozen=True, slots=True)
+class UploadRow:
+    seq: int
+    operation_id: str
+    candidate_id: str
+    exam_id: str
+    kind: str
+    question: int | None
+    choice: str | None
+    at: float
+
+
 def version_id_for(exam_id: str, candidate_id: str) -> str:
     import hashlib
 
@@ -355,3 +367,49 @@ class ExamStore:
                 "at) VALUES (?, ?, ?, ?, ?, ?)",
                 (operation_id, candidate_id, kind, question, choice, now),
             )
+
+    # --- For sync -----------------------------------------------------------------------
+
+    def pending_uploads(self, limit: int = 500) -> list[UploadRow]:
+        """Logged writes not yet accepted by the cloud, oldest first."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT o.seq, o.operation_id, o.candidate_id, c.exam_id, o.kind, o.question, "
+                "o.choice, o.at FROM operations o JOIN candidates c USING (candidate_id) "
+                "WHERE o.uploaded = 0 ORDER BY o.seq LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [UploadRow(*r) for r in rows]
+
+    def mark_uploaded(self, operation_ids: list[str]) -> None:
+        with self._transaction():
+            self._db.executemany(
+                "UPDATE operations SET uploaded = 1 WHERE operation_id = ?",
+                [(op,) for op in operation_ids],
+            )
+
+    def upload_counts(self) -> tuple[int, int]:
+        """(waiting to upload, uploaded)."""
+        with self._lock:
+            waiting, done = self._db.execute(
+                "SELECT COALESCE(SUM(uploaded = 0), 0), COALESCE(SUM(uploaded = 1), 0) "
+                "FROM operations"
+            ).fetchone()
+        return int(waiting), int(done)
+
+    def package_hashes(self) -> set[str]:
+        with self._lock:
+            return {r[0] for r in self._db.execute("SELECT sha256 FROM exams").fetchall()}
+
+    def set_meta(self, key: str, value: str) -> None:
+        with self._transaction():
+            self._db.execute(
+                "INSERT INTO meta VALUES (?, ?) "
+                "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+
+    def meta(self, key: str) -> str | None:
+        with self._lock:
+            row = self._db.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return None if row is None else str(row[0])

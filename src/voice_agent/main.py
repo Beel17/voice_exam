@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Final
 
 from fastapi import FastAPI, WebSocket
-from fastapi.responses import RedirectResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from voice_agent import selfcheck
@@ -44,6 +44,8 @@ TIME_EVERY_S: Final = 30.0
 MODEL_CHECK_EVERY_S: Final = 5.0
 LOAD_CHECK_EVERY_S: Final = 1.0
 CLIENT_DIR: Final = Path(__file__).parent / "client"
+# The exam app (exam-app/, built by `npm run build` into here; not kept in git).
+EXAM_APP_DIR: Final = Path(__file__).parent / "exam"
 
 
 def create_app(
@@ -118,6 +120,7 @@ def create_app(
     # and browsers refuse to run a module served that way.
     mimetypes.add_type("text/javascript", ".js")
     app.mount("/client", StaticFiles(directory=CLIENT_DIR, html=True), name="client")
+    _mount_exam_app(app, EXAM_APP_DIR)
 
     @app.get("/", include_in_schema=False)
     async def home() -> RedirectResponse:
@@ -141,6 +144,20 @@ def create_app(
         )
 
     return app
+
+
+def _mount_exam_app(app: FastAPI, directory: Path) -> None:
+    """The candidates' exam screen at /exam/, or a note saying how to build it."""
+    if (directory / "index.html").exists():
+        app.mount("/exam", StaticFiles(directory=directory, html=True), name="exam")
+        return
+
+    @app.get("/exam/{path:path}", include_in_schema=False)
+    async def not_built(path: str) -> PlainTextResponse:
+        return PlainTextResponse(
+            "The exam app is not built. Run `npm install` and `npm run build` in exam-app/.",
+            status_code=503,
+        )
 
 
 def _nothing() -> None:

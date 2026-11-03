@@ -20,3 +20,7 @@ config/centre.toml
 # Benchmark output (send it back; do not commit it).
 bench-report.json
 model-diagnosis.txt
+
+# The exam app: dependencies, and the build the service serves (made by npm run build).
+exam-app/node_modules/
+src/voice_agent/exam/

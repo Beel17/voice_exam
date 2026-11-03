@@ -100,6 +100,19 @@ def pc_llm_threads() -> int:
     return min(6, max(2, (os.cpu_count() or 4) // 2))
 
 
+class SyncSettings(BaseModel):
+    """The cloud the centre syncs with (python -m voice_agent.sync). Unset: no sync."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    url: str | None = None  # https://...
+    centre_id: str | None = None
+    # The centre's token for the cloud, never in this file: in token_file (default
+    # <data_dir>/sync-token.txt), or the VOICE_AGENT_SYNC__TOKEN environment variable.
+    token_file: Path | None = None
+    token: str | None = Field(default=None, repr=False)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="VOICE_AGENT_",
@@ -123,6 +136,7 @@ class Settings(BaseSettings):
     limits: LimitSettings = LimitSettings()
     llm: LlmSettings = LlmSettings()
     speech: SpeechSettings = SpeechSettings()
+    sync: SyncSettings = SyncSettings()
 
     @property
     def llm_threads(self) -> int:

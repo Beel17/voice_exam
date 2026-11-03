@@ -1,4 +1,4 @@
-"""Open the voice client in the default browser as soon as the service is ready.
+"""Open the exam app in the default browser as soon as the service is ready.
 
     python -m tools.open_client
 
@@ -22,7 +22,7 @@ def main() -> None:
     while time.monotonic() < deadline:
         try:
             if httpx.get(f"{url}/readyz", timeout=2, trust_env=False).status_code == 200:
-                webbrowser.open(f"{url}/")
+                webbrowser.open(f"{url}/exam/")
                 return
         except httpx.HTTPError:
             pass

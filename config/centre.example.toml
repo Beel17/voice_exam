@@ -33,3 +33,15 @@ max_calls_per_minute = 20
 enabled = true
 # One recogniser per worker, one core each: the pool size is speech's share of the CPU.
 recognition_workers = 1
+
+[adapter]
+# "local": the centre's exam store (<data_dir>/exams.db). Load papers with
+# python -m voice_agent.examstore (or download them with python -m voice_agent.sync pull),
+# then open a paper for candidates to sign in. "fake": built-in practice exams only.
+kind = "local"
+
+[sync]
+# The cloud this centre downloads papers from and uploads results to. The centre's token
+# goes in <data_dir>/sync-token.txt, never in this file.
+# url = "https://exams.example.org"
+# centre_id = "CENTRE-001"

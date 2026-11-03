@@ -7,8 +7,11 @@ Takes the program from a built bundle (its Python, libraries, models and WinSW) 
 dist/voice-exam-setup-<version>.exe. Installing it, which needs administrator rights:
 puts the program in Program Files; puts everything that changes in ProgramData\\VoiceExam
 (the configuration and device token, written on first install and kept from then on;
-sessions; logs); installs and starts the Windows service; adds Start-menu shortcuts to
-the exam page, the status page, the device token and the logs. Uninstalling stops and
+sessions; the exam store; logs); installs and starts the Windows service; adds Start-menu
+shortcuts to the exam app, the status page, the centre's tools (exam store and cloud sync,
+each a double-click that asks for administrator rights), the configuration, the device
+token and the logs. The service runs on the exam store: no candidate can sign in until a
+paper is imported (or downloaded) and opened. Uninstalling stops and
 removes the service and the program, and keeps ProgramData\\VoiceExam: it may hold
 answers not yet delivered to the platform. Installing again over it is an upgrade.
 """
@@ -20,7 +23,7 @@ import tomllib
 from pathlib import Path
 from typing import Final
 
-from tools.make_bundle import SERVICE_EXE, SERVICE_ID, service_xml
+from tools.make_bundle import ELEVATE, SERVICE_EXE, SERVICE_ID, centre_scripts, service_xml
 
 ROOT = Path(__file__).parents[1]
 ISCC: Final = Path.home() / "AppData" / "Local" / "Programs" / "Inno Setup 6" / "ISCC.exe"
@@ -29,6 +32,18 @@ APP_ID: Final = "{8F3C9A2E-5D41-4B7A-9E16-2C7F0B4D8A53}"
 DATA: Final = r"{commonappdata}\VoiceExam"  # Inno Setup's name for C:\ProgramData
 PAGE: Final = "http://127.0.0.1:8765/"
 PROGRAM_PARTS: Final = ("python", "lib", "tools", "models")
+# The centre's tasks run from {app}\centre as administrator: the exam store is in
+# ProgramData, written by the service, and only administrators may change it.
+INSTALLED_ENV: Final = (
+    ELEVATE
+    + r"""cd /d "%~dp0.."
+set PYTHONPATH=%CD%\lib;%CD%
+set PYTHONNOUSERSITE=1
+set PYTHONUTF8=1
+set PY=%CD%\python\python.exe
+set VOICE_AGENT_CONFIG=%ProgramData%\VoiceExam\centre.toml
+"""
+)
 
 
 def script(bundle: Path, stage: Path, version: str) -> str:
@@ -42,6 +57,7 @@ def script(bundle: Path, stage: Path, version: str) -> str:
     # Inno Setup doubles a quote inside a quoted value.
     setup_args = f'"-E -s -m tools.setup_centre --data ""{DATA}"""'
     token_file = f'"""{DATA}\\DEVICE-TOKEN.txt"""'
+    config_file = f'"""{DATA}\\centre.toml"""'
     return rf"""; Written by tools/make_installer.py; do not edit by hand.
 [Setup]
 AppId={{{APP_ID}
@@ -72,14 +88,17 @@ Name: "{DATA}"
 Source: "{bundle / SERVICE_EXE}"; DestDir: "{{app}}"; Flags: ignoreversion
 Source: "{stage / "voice-exam-service.xml"}"; DestDir: "{{app}}"; Flags: ignoreversion
 Source: "{ROOT / "config" / "centre.example.toml"}"; DestDir: "{{app}}\config"; Flags: ignoreversion
+Source: "{stage / "centre"}\*"; DestDir: "{{app}}\centre"; Flags: ignoreversion
 
 [INI]
-Filename: "{{app}}\Voice exam page.url"; Section: "InternetShortcut"; Key: "URL"; String: "{PAGE}"
+Filename: "{{app}}\Exam app.url"; Section: "InternetShortcut"; Key: "URL"; String: "{PAGE}exam/"
 Filename: "{{app}}\Voice exam status.url"; Section: "InternetShortcut"; Key: "URL"; String: "{PAGE}status"
 
 [Icons]
-Name: "{{autoprograms}}\Voice Exam\Voice exam page"; Filename: "{{app}}\Voice exam page.url"
+Name: "{{autoprograms}}\Voice Exam\Exam app"; Filename: "{{app}}\Exam app.url"
 Name: "{{autoprograms}}\Voice Exam\Voice exam status"; Filename: "{{app}}\Voice exam status.url"
+Name: "{{autoprograms}}\Voice Exam\Centre tools (exam store and sync)"; Filename: "{{app}}\centre"
+Name: "{{autoprograms}}\Voice Exam\Configuration"; Filename: "notepad.exe"; Parameters: {config_file}
 Name: "{{autoprograms}}\Voice Exam\Device token"; Filename: "{DATA}\DEVICE-TOKEN.txt"
 Name: "{{autoprograms}}\Voice Exam\Logs"; Filename: "{DATA}\logs"
 
@@ -132,6 +151,10 @@ def main() -> None:
         service_xml(r"%ProgramData%\VoiceExam\logs", r"%ProgramData%\VoiceExam\centre.toml"),
         encoding="utf-8",
     )
+    centre = stage / "centre"
+    centre.mkdir(exist_ok=True)
+    for name, text in centre_scripts(INSTALLED_ENV).items():
+        (centre / name).write_text(text.replace("\n", "\r\n"), encoding="ascii", newline="")
     iss = stage / "voice-exam.iss"
     iss.write_text(script(bundle, stage, version), encoding="utf-8")
     print(f"compiling {iss.name} (several minutes: the models are 1.3 GB) ...", flush=True)

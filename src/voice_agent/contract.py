@@ -6,9 +6,17 @@ match the contract is rejected whole, never partially applied. Binary frames car
 """
 
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, TypeAdapter, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    TypeAdapter,
+    ValidationError,
+    model_validator,
+)
 
 SCHEMA_VERSION = 1
 
@@ -31,11 +39,13 @@ AUDIO_OUT_SAMPLE_RATE = 22_050
 AUDIO_OUT_FRAME_BYTES = AUDIO_OUT_SAMPLE_RATE * 2 // 5
 
 OptionLetter = Literal["A", "B", "C", "D", "E"]
-Key = Literal["1", "2", "3", "4", "5", "R", "N", "P", "Enter", "Esc"]
+# S submits (still asked twice), F flags to revisit, T says the time left.
+Key = Literal["1", "2", "3", "4", "5", "R", "N", "P", "S", "F", "T", "Enter", "Esc"]
 SayKind = Literal["question", "options", "prompt", "confirm"]
 CueName = Literal["listening", "saved", "not_understood", "time_warning"]
 
 Identifier = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9._:/-]{1,64}$")]
+QuestionNo = Annotated[int, Field(ge=1, le=999)]
 
 
 class _Message(BaseModel):
@@ -55,18 +65,20 @@ class Hello(_Message):
     resume_session_id: Identifier | None = None
     # The last ``heard.seq`` the client received, so a resumed turn is never run twice.
     last_seq: Annotated[int, Field(ge=0)] | None = None
+    # False for a screen that reads the exam itself (standard mode): replies still come
+    # as ``say`` text, but no speech audio is made for them.
+    audio: bool = True
 
 
 class Login(_Message):
-    """Identifies the candidate when the secure browser or invigilator supplies it.
-
-    Saying the registration number aloud is the other route; it arrives as ``text`` (and
-    later as speech) and is resolved by the session, not by the contract.
+    """Identifies the candidate: their examination number, typed on the sign-in screen
+    or supplied by the invigilator. ``exam_code`` is needed only where the platform asks
+    for it; the centre's exam store finds the paper among those open for sign-in.
     """
 
     type: Literal["login"] = "login"
     reg_no: Identifier
-    exam_code: Identifier
+    exam_code: Identifier | None = None
 
 
 class TextInput(_Message):
@@ -95,6 +107,47 @@ class KeyPress(_Message):
     key: Key
 
 
+ScreenAction = Literal["select", "go_to", "next", "previous", "flag", "unflag", "submit",
+                       "confirm", "cancel"]  # fmt: skip
+
+
+class Act(_Message):
+    """A click on the exam screen (standard mode). Each is the same action as its voice
+    command, with one difference: ``select`` saves the clicked option (or, with no
+    ``choice``, clears the answer) at once, because clicking it is the confirmation.
+    ``select`` names the question on screen; it is refused for any other question.
+    ``flag`` and ``unflag`` mark a question to revisit (the current one if none given).
+    """
+
+    type: Literal["act"] = "act"
+    action: ScreenAction
+    question: QuestionNo | None = None
+    choice: OptionLetter | None = None
+
+    @model_validator(mode="after")
+    def _arguments_fit(self) -> Self:
+        if self.action in ("select", "go_to") and self.question is None:
+            raise ValueError(f"{self.action} needs a question")
+        if self.choice is not None and self.action != "select":
+            raise ValueError("only select takes a choice")
+        if self.question is not None and self.action not in ("select", "go_to", "flag", "unflag"):
+            raise ValueError(f"{self.action} takes no question")
+        return self
+
+
+GuideStep = Literal["welcome", "left", "right", "sound_check", "mic_check", "sign_in"]
+
+
+class Guide(_Message):
+    """Audio mode, before sign-in: speak one step of the welcome, the headphone and
+    microphone checks, or the voice sign-in. ``mic_check`` makes the next thing heard be
+    read back; ``sign_in`` makes it be taken as the examination number, read back, and
+    signed in with on "yes" (or Enter). Every step's words are the service's own."""
+
+    type: Literal["guide"] = "guide"
+    step: GuideStep
+
+
 class PlaybackDone(_Message):
     type: Literal["playback_done"] = "playback_done"
     utterance_id: Identifier
@@ -105,7 +158,7 @@ class Ping(_Message):
 
 
 ClientMessage = Annotated[
-    Hello | Login | TextInput | TalkStart | TalkEnd | KeyPress | PlaybackDone | Ping,
+    Hello | Login | TextInput | TalkStart | TalkEnd | KeyPress | Act | Guide | PlaybackDone | Ping,
     Field(discriminator="type"),
 ]
 
@@ -169,6 +222,8 @@ class PendingConfirm(_Message):
     kind: Literal["answer", "clear", "submit"]
     question: Annotated[int, Field(ge=1)] | None = None
     choice: OptionLetter | None = None
+    # Submitting asks twice; this is the second, after which the exam is submitted.
+    final: bool = False
 
 
 class State(_Message):
@@ -184,6 +239,55 @@ class State(_Message):
     pending_confirm: PendingConfirm | None = None
     speed: Annotated[float, Field(ge=0.8, le=2.5)]
     cue_volume: Annotated[float, Field(ge=0.0, le=1.0)]
+    # For the screen: False until the first question has been read (the introduction).
+    started: bool = False
+    current_answer: OptionLetter | None = None
+    # The question navigator: which are answered, and which are marked to revisit.
+    answered_questions: tuple[int, ...] = ()
+    flagged: tuple[int, ...] = ()
+    ended: Literal["submitted", "time_up"] | None = None
+
+
+class ShownOption(_Message):
+    letter: OptionLetter
+    text: str
+
+
+class QuestionView(_Message):
+    """The question now current, for a screen to show (sent before it is read aloud).
+    Text is the paper's own, verbatim; ``state`` carries the answer and the flags."""
+
+    type: Literal["question"] = "question"
+    number: QuestionNo
+    of: QuestionNo
+    section: Annotated[int, Field(ge=1)] | None
+    section_title: str | None
+    text: str
+    options: tuple[ShownOption, ...]
+
+
+class SectionView(_Message):
+    number: Annotated[int, Field(ge=1)]
+    title: str
+    first_question: QuestionNo
+    last_question: QuestionNo
+
+
+class Details(_Message):
+    """Sent once after ``session``: the exam and, where the platform has them, the
+    candidate's own details for the identity check before the exam starts. The photo,
+    if ``photo`` is true, is at ``/v1/sessions/{session_id}/photo`` (device token)."""
+
+    type: Literal["details"] = "details"
+    question_count: QuestionNo
+    duration_s: Annotated[int, Field(ge=1)]
+    sections: tuple[SectionView, ...]
+    exam_title: str | None = None
+    exam_number: str | None = None
+    full_name: str | None = None
+    seat: str | None = None
+    audio_mode: bool | None = None
+    photo: bool = False
 
 
 class Pong(_Message):
@@ -213,7 +317,17 @@ class Error(_Message):
 
 
 ServerMessage = Annotated[
-    SessionInfo | Say | Stop | AudioEnd | Cue | Heard | State | Pong | Error,
+    SessionInfo
+    | Details
+    | QuestionView
+    | Say
+    | Stop
+    | AudioEnd
+    | Cue
+    | Heard
+    | State
+    | Pong
+    | Error,
     Field(discriminator="type"),
 ]
 

@@ -7,7 +7,9 @@ Each drill runs the service as its own process, as in a centre, with the sample 
 keeping its state on disk (as a real platform on another machine would), talks to it
 over real WebSockets, breaks something, and checks what a candidate would care about:
 no confirmed answer lost, none saved twice, the exam resumes where it was, and the
-platform ends up with exactly what the candidate confirmed.
+platform ends up with exactly what the candidate confirmed. The last drill runs a centre
+on its exam store against a stand-in cloud, and checks that results reach the cloud once
+each, whatever fails on the way.
 """
 
 import argparse
@@ -35,12 +37,59 @@ from tools.bench import Candidate
 
 LANGUAGE_MODEL: Final = Path("models/qwen2.5-1.5b-instruct-q4_k_m.gguf")
 OUTBOX_WAIT_S: Final = 20.0  # the outbox retries every 5 s; generous for a slow PC
+CENTRE: Final = "DRILL-CENTRE"
+
+
+class Cloud:
+    """The stand-in cloud as its own process, stopped and started like a real server."""
+
+    def __init__(self, work: Path) -> None:
+        from voice_agent.examstore.__main__ import sample_package
+        from voice_agent.examstore.package import write_package
+
+        self.packages, self.results = work / "cloud" / "packages", work / "cloud" / "results"
+        self.packages.mkdir(parents=True)
+        (self.packages / "practice.zip").write_bytes(write_package(sample_package()))
+        self.token = secrets.token_urlsafe(24)
+        self.port = _free_port()
+        self.url = f"http://127.0.0.1:{self.port}"
+        self.work = work
+        self.process: subprocess.Popen[bytes] | None = None
+
+    def start(self) -> None:
+        log = (self.work / "cloud.log").open("ab")
+        self.process = subprocess.Popen(
+            [sys.executable, "-m", "voice_agent.sync.standin", "--packages", str(self.packages),
+             "--results", str(self.results), "--centre", CENTRE, "--token", self.token,
+             "--port", str(self.port)],
+            stdout=log, stderr=subprocess.STDOUT,
+        )  # fmt: skip
+        log.close()
+        began = time.monotonic()
+        while time.monotonic() - began < 60:
+            with socket.socket() as sock:
+                if sock.connect_ex(("127.0.0.1", self.port)) == 0:
+                    return
+            time.sleep(0.1)
+        raise RuntimeError("the stand-in cloud did not start; see cloud.log")
+
+    def stop(self) -> None:
+        if self.process is not None and self.process.poll() is None:
+            self.process.kill()
+            self.process.wait()
+
+    def received(self) -> list[dict[str, Any]]:
+        log = self.results / "results.jsonl"
+        lines = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+        return [json.loads(line) for line in lines]
 
 
 class Service:
     """The voice service as a separate process, started and killed like a real one."""
 
-    def __init__(self, work: Path, *, with_model: bool) -> None:
+    def __init__(self, work: Path, *, with_model: bool, sync: str | None = None) -> None:
+        """``sync``: run on the exam store (in the data folder), syncing with the cloud at
+        this address; otherwise on the sample platform, keeping its state on disk."""
         self.work = work
         self.token = secrets.token_urlsafe(24)
         self.port = _free_port()
@@ -54,14 +103,18 @@ class Service:
             if with_model
             else "enabled = false"
         )
+        platform = (
+            f'kind = "local"\n[sync]\nurl = "{sync}"\ncentre_id = "{CENTRE}"\n'
+            if sync
+            else f'load_candidates = 40\nstate_dir = "{self.platform.as_posix()}"\n'
+        )
         self.config = work / "centre.toml"
         self.config.write_text(
             f'mode = "pc"\nport = {self.port}\ndata_dir = "{self.data.as_posix()}"\n'
             f'models_dir = "{Path("models").resolve().as_posix()}"\n'
             f'device_token_sha256 = ["{digest}"]\nadmin_token_sha256 = ["{digest}"]\n'
             f"[limits]\nmax_messages_per_10s = 10000\n"
-            f'[adapter]\nload_candidates = 40\nstate_dir = "{self.platform.as_posix()}"\n'
-            f"[llm]\n{llm}\n[speech]\nenabled = false\n",
+            f"[llm]\n{llm}\n[speech]\nenabled = false\n[adapter]\n{platform}",
             encoding="utf-8",
         )
         self.process: subprocess.Popen[bytes] | None = None
@@ -105,6 +158,16 @@ class Service:
             headers={"Authorization": f"Bearer {self.token}"},
             timeout=5,
             trust_env=False,
+        )
+
+    def run(self, *args: str) -> subprocess.CompletedProcess[str]:
+        """A centre command (exam store, sync) with this service's configuration."""
+        return subprocess.run(
+            [sys.executable, "-m", *args],
+            env={**os.environ, "VOICE_AGENT_CONFIG": str(self.config)},
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
 
     def pid(self) -> int:
@@ -332,6 +395,67 @@ async def model_server_killed(s: Service) -> tuple[bool, str]:
     )
 
 
+async def results_reach_the_cloud(s: Service) -> tuple[bool, str]:
+    """A centre on its exam store: papers down from the cloud before the exam, a candidate
+    answers and submits, then results go up after it, with the cloud down at the first
+    try and the service killed in between. Runs its own centre and cloud processes."""
+    work = s.work / "sync-drill"
+    work.mkdir()
+    cloud = Cloud(work)
+    centre = Service(work, with_model=False, sync=cloud.url)
+    centre.data.mkdir()
+    (centre.data / "sync-token.txt").write_text(cloud.token, encoding="ascii")
+    problems: list[str] = []
+    try:
+        cloud.start()
+        pulled = centre.run("voice_agent.sync", "pull")
+        if "imported: practice-utme-sample-1" not in pulled.stdout:
+            return False, f"pull: {pulled.stdout or pulled.stderr}".strip()
+        centre.run("voice_agent.examstore", "open", "exam-sample-60")
+        centre.start()
+        c = await Candidate.sign_in(centre.url, centre.token, "20260001PR", False)
+        await c.turn("start")
+        for choice in "ABC":
+            await answer(c, choice)
+        for text in ("submit", "yes", "yes"):
+            await c.turn(text)
+        ended = "submitted" in " ".join(c.said[-2:])
+        await c.close()
+        if not ended:
+            problems.append("the candidate was not told the exam was submitted")
+
+        cloud.stop()  # the cloud is down when the centre first tries to upload
+        refused = centre.run("voice_agent.sync", "push")
+        if refused.returncode == 0 or "could not be reached" not in refused.stderr:
+            problems.append(f"push with the cloud down: {refused.stdout}{refused.stderr}")
+        centre.kill()  # and the centre's service dies before the second try
+        cloud.start()
+        pushed = centre.run("voice_agent.sync", "push")
+        again = centre.run("voice_agent.sync", "push")
+        status = centre.run("voice_agent.sync", "status")
+    finally:
+        centre.stop()
+        cloud.stop()
+    received = cloud.received()
+    ids = [op["operation_id"] for op in received]
+    kinds = [op["kind"] for op in received]
+    if "uploaded 4 results" not in pushed.stdout:
+        problems.append(f"push: {pushed.stdout}{pushed.stderr}".strip())
+    if "uploaded 0 results" not in again.stdout:
+        problems.append(f"second push: {again.stdout}{again.stderr}".strip())
+    if "waiting to upload: 0" not in status.stdout:
+        problems.append(f"status: {status.stdout}".strip())
+    if len(ids) != len(set(ids)) or kinds != ["save", "save", "save", "submit"]:
+        problems.append(f"the cloud holds {kinds}")
+    return not problems, (
+        "; ".join(problems)
+        or "papers pulled and opened; the candidate answered 3 and submitted; with the cloud "
+        "down the upload was refused in plain words and nothing was lost; after the service "
+        f"was killed and the cloud came back, the cloud received {len(ids)} results once "
+        "each, and a second upload sent nothing"
+    )
+
+
 def descendants(pid: int, name: str) -> list[int]:
     """Processes below ``pid``, at any depth, whose program name starts with ``name``."""
     if sys.platform == "win32":
@@ -376,6 +500,7 @@ DRILLS: Final[list[tuple[str, Drill]]] = [
     ("Platform down at submit", platform_down_at_submit),
     ("Connection dropped mid-turn", connection_dropped_mid_turn),
     ("Plug pulled while writing", power_cut_while_writing),
+    ("Results reach the cloud", results_reach_the_cloud),
 ]
 
 

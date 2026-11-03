@@ -16,6 +16,7 @@ from voice_agent.understanding.intents import (
     Confirm,
     GoTo,
     GoToSection,
+    LocalAction,
     MaybeQuestionArgs,
     NotAllowed,
     QuestionArgs,
@@ -183,8 +184,10 @@ def test_intents_are_immutable() -> None:
 
 
 def test_every_key_maps_to_an_action() -> None:
+    # An action the model knows, or one only rules, keys and the screen produce (flag).
+    actions = set(ACTION_TYPES) | set(get_args(LocalAction))
     for key in get_args(Key):
-        assert type(action_for_key(key)) in ACTION_TYPES
+        assert type(action_for_key(key)) in actions
 
 
 @pytest.mark.parametrize(

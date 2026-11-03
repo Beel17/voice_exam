@@ -13,6 +13,7 @@ from typing import Final
 
 from voice_agent.adapters.base import (
     AdapterRejected,
+    CandidateProfile,
     CandidateSession,
     ExamOutline,
     Question,
@@ -95,6 +96,23 @@ class LocalAdapter:
 
     async def submit(self, candidate_id: str, operation_id: str) -> None:
         await self._run(lambda: self._store.write(operation_id, candidate_id, "submit"))
+
+    async def get_profile(self, candidate_id: str) -> CandidateProfile:
+        def profile() -> CandidateProfile:
+            c = self._store.candidate(candidate_id)
+            return CandidateProfile(
+                exam_number=c.profile.exam_number,
+                full_name=c.profile.full_name,
+                exam_title=self._store.exam(c.exam_id).title,
+                seat=c.profile.seat,
+                audio_mode=c.profile.audio_mode,
+                has_photo=self._store.photo(candidate_id) is not None,
+            )
+
+        return await self._run(profile)
+
+    async def get_photo(self, candidate_id: str) -> bytes | None:
+        return await self._run(lambda: self._store.photo(candidate_id))
 
     def _time_left(self, c: CandidateRow) -> int:
         duration = self._store.exam(c.exam_id).outline.duration_s

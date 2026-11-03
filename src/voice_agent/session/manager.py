@@ -16,8 +16,25 @@ from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Final
 
-from voice_agent.adapters.base import AdapterError, AdapterUnavailable, ExamDataAdapter, Question
-from voice_agent.contract import Cue, CueName, Key, Say, ServerMessage
+from voice_agent.adapters.base import (
+    AdapterError,
+    AdapterUnavailable,
+    CandidateProfiles,
+    ExamDataAdapter,
+    Question,
+)
+from voice_agent.contract import (
+    Act,
+    Cue,
+    CueName,
+    Details,
+    Key,
+    QuestionView,
+    Say,
+    SectionView,
+    ServerMessage,
+    ShownOption,
+)
 from voice_agent.runtime.degrade import Level
 from voice_agent.session import machine as m
 from voice_agent.session.events import SessionRecord, SessionStore
@@ -38,7 +55,7 @@ from voice_agent.session.replies import (
 )
 from voice_agent.understanding import grammar
 from voice_agent.understanding import intents as i
-from voice_agent.understanding.intents import Intent, action_for_key
+from voice_agent.understanding.intents import Intent, action_for_key, intent_for_act
 from voice_agent.understanding.llm import LlmContext, LlmFallback, Understander
 
 # Enough for any one turn; a client that stops reading loses the oldest messages, never
@@ -179,6 +196,7 @@ class SessionManager:
         session, effects = created
         async with session.lock:
             await self._run(session, effects)
+            await self._time_left(session)  # the screen's clock is right from the start
             self._emit_state(session)
         return session
 
@@ -218,6 +236,8 @@ class SessionManager:
             await self._feed(session, m.Resumed())
             if self._practice and session.state.phase is m.Phase.ENDED:
                 self._aside(session, PracticeEnded())
+            if session.state.phase is not m.Phase.ENDED:
+                await self._time_left(session)
             self._emit_state(session)
         return session
 
@@ -363,6 +383,70 @@ class SessionManager:
     async def handle_key(self, session: LiveSession, key: Key) -> None:
         await self.handle(session, action_for_key(key), m.Source.KEY, text=key)
 
+    async def handle_act(self, session: LiveSession, act: Act) -> None:
+        """A click on the exam screen."""
+        await self.handle(session, intent_for_act(act), m.Source.SCREEN)
+
+    # --- For the screen ---------------------------------------------------------------
+
+    async def details(self, session: LiveSession) -> Details:
+        """The exam's shape and, where the platform has them, the candidate's own details
+        for the identity check. Without them (platform down, or none) the exam goes on."""
+        state = session.state
+        details = Details(
+            question_count=state.question_count,
+            duration_s=state.duration_s,
+            sections=tuple(
+                SectionView(
+                    number=s.number,
+                    title=s.title,
+                    first_question=s.first_question,
+                    last_question=s.last_question,
+                )
+                for s in state.sections
+            ),
+        )
+        if not isinstance(self._adapter, CandidateProfiles):
+            return details
+        try:
+            profile = await self._call(self._adapter.get_profile(state.candidate_id))
+        except AdapterError:
+            return details
+        return details.model_copy(
+            update={
+                "exam_title": profile.exam_title,
+                "exam_number": profile.exam_number,
+                "full_name": profile.full_name,
+                "seat": profile.seat,
+                "audio_mode": profile.audio_mode,
+                "photo": profile.has_photo,
+            }
+        )
+
+    async def photo(self, session_id: str) -> bytes | None:
+        """The candidate's photo for the identity check. Raises ``NotFound``."""
+        session = await self._get(session_id)
+        if not isinstance(self._adapter, CandidateProfiles):
+            return None
+        try:
+            return await self._call(self._adapter.get_photo(session.record.candidate_id))
+        except AdapterError:
+            return None
+
+    def _show(self, session: LiveSession, n: int, question: Question) -> None:
+        """The question as a screen shows it: the paper's own text, never spoken_text."""
+        section = session.state.section_of(n)
+        session.emit(
+            QuestionView(
+                number=n,
+                of=session.state.question_count,
+                section=section.number if section else None,
+                section_title=section.title if section else None,
+                text=question.text,
+                options=tuple(ShownOption(letter=o.letter, text=o.text) for o in question.options),
+            )
+        )
+
     # --- Background passes (called periodically by the runtime) -----------------------
 
     async def retry_outbox(self) -> None:
@@ -419,6 +503,8 @@ class SessionManager:
                     if question is None:
                         await self._feed(session, m.QuestionUnavailable(question=n))
                     else:
+                        if session.state.phase not in (m.Phase.ENDED, m.Phase.SUBMITTING):
+                            self._show(session, n, question)  # on screen before it is read
                         loaded = m.QuestionLoaded(question=n, option_count=len(question.options))
                         await self._feed(session, loaded)
                 case m.Speak(reply=reply):

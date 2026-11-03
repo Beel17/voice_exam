@@ -19,23 +19,33 @@ For the person helping the tester
    After about 15 seconds (up to a minute on a slow PC), the exam page opens in the
    web browser by itself.
 
-2. The first time only, fill in the page:
-     Device token:         copy the line in DEVICE-TOKEN.txt
-     Registration number:  10000001AA  (others: 10000002AA, 10000003AA)
-     Exam code:            UTME-SAMPLE
-   The page remembers these on this PC. From then on the Start button is selected when
-   the page opens, so the tester only presses Enter.
-   Each new copy of this folder has its own token. If the page says the token was not
-   accepted, paste the line from this folder's DEVICE-TOKEN.txt and press Start again.
+2. The first time only, the page asks for the device token: copy the line in
+   DEVICE-TOKEN.txt and press Save. The page remembers it on this PC. Each new copy of
+   this folder has its own token; if the page says the token was not accepted, paste the
+   line from this folder's DEVICE-TOKEN.txt again.
 
-3. The first time, the browser asks to use the microphone: allow it.
+3. Choose the mode for the tester:
+     Standard mode, for testers who read: the page opens in it. The tester signs in
+       with an examination number, checks their name, and answers by clicking.
+     Audio mode, for blind or visually impaired testers: on the sign-in page, click
+       "Audio mode (for candidates who listen)". The page remembers it. The tester
+       presses Space to begin; the service then speaks everything.
+   The first time in audio mode, the browser asks to use the microphone: allow it.
+
+   Practice examination numbers (fictional candidates):
+     20260001PR to 20260006PR   standard mode
+     20260007PR, 20260008PR     registered for audio mode
+   In audio mode the tester says the number one character at a time, for example
+   "two zero two six zero zero zero seven, P for Papa, R for Romeo", hears it read back,
+   and says "yes". You can also type it in the box at the bottom of the page.
 
 To change the voice, close the black window and double-click another "Start exam" file.
 To run the exam again from the beginning, close the black window and double-click
-"Start over (delete test sessions)". Or sign in with another registration number.
+"Start over (delete test sessions)". Or sign in with another examination number.
 
 If the page was closed by mistake, double-click "Open the exam page again". The exam
-carries on where it was.
+carries on where it was. When a tester has finished, click "Done" on the receipt page:
+the page is then ready for the next tester.
 
 Optional: run it as a Windows service, as an exam centre would. Double-click
 "Install as a Windows service" and allow the Windows prompt (it needs administrator
@@ -45,22 +55,38 @@ It uses voice 1. To go back to the black window, run "Remove the Windows service
 
 "Show the service status" opens a page, for whoever looks after the exam, saying in
 plain words whether everything is working. Above all it shows any answers still waiting
-to reach the exam platform: they are kept safely on this PC and sent automatically while
+to reach the exam store: they are kept safely on this PC and written automatically while
 the service runs. Never delete the folder, or run "Start over", while any are waiting.
+
+The "Exam store" and "Sync" files are the exam centre's tasks. Testers do not need
+them: the practice paper is already loaded and open.
+  Exam store - list papers                 what is loaded, and which papers are open
+  Exam store - import a paper              load an exam package (.zip)
+  Exam store - open a paper for sign-in    let candidates sign in to a paper
+  Exam store - close a paper               stop candidates signing in to it
+  Sync - download papers                   fetch this centre's papers from the cloud
+  Sync - upload results                    send every answer and submission to the cloud
+  Sync - status                            results waiting, and the last download and upload
+Sync needs the cloud's address and centre ID in config\centre.toml ([sync]) and the
+centre's token in data\sync-token.txt.
 
 
 For the tester
 --------------
 
-The service reads everything aloud. A screen reader can stay on: the page tells it not
-to read the exam a second time.
+Standard mode: click an option to answer; it is saved at once. Previous and Next, or the
+numbered buttons, move between questions; Revisit Later marks a question to come back
+to. Keys: A to E answer, the arrow keys move. Submit Exam shows a summary, then asks once
+more before submitting.
+
+Audio mode: the service reads everything aloud. A screen reader can stay on.
 
   Hold Space to talk. Release it when you have finished speaking.
   Pressing Space also stops the voice at once, so you can interrupt it.
 
 You can say things like: "start", "repeat", "next", "go to question 12", "B",
 "I'll go with the third one", "yes", "no", "how much time is left", "which questions
-have I not answered", "slower", "faster", "help".
+have I not answered", "flag this", "slower", "faster", "help".
 
 Keys work too, without speaking:
   1 to 5    choose option A to E
@@ -69,6 +95,9 @@ Keys work too, without speaking:
   R         repeat the question
   N         next question
   P         previous question
+  F         flag the question to revisit
+  T         time left
+  S         submit (asked twice)
 
 An answer is only saved after you confirm it. The service says "Saved" the first few
 times, then just plays a short sound.

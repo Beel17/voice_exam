@@ -49,3 +49,21 @@ def test_the_installer_script(tmp_path: Path) -> None:
     assert "commonappdata" not in "".join(deleted)
     # An upgrade stops the running service before replacing its files.
     assert "PrepareToInstall" in iss and "'stop'" in iss
+
+
+def test_a_centre_runs_on_its_exam_store(tmp_path: Path) -> None:
+    write_config(EXAMPLE, tmp_path / "centre.toml", tmp_path / "DEVICE-TOKEN.txt")
+    assert load_settings(tmp_path / "centre.toml").adapter.kind == "local"
+
+
+def test_the_installed_centre_tasks() -> None:
+    from tools.make_bundle import centre_scripts
+
+    for name, text in centre_scripts(make_installer.INSTALLED_ENV).items():
+        # As administrator (the exam store is in ProgramData), on the installed program,
+        # with the centre's own configuration.
+        assert "-Verb RunAs" in text and 'cd /d "%~dp0.."' in text, name
+        assert "VOICE_AGENT_CONFIG=%ProgramData%\\VoiceExam\\centre.toml" in text, name
+    iss = make_installer.script(Path("bundle"), Path("stage"), "1.0")
+    assert 'DestDir: "{app}\\centre"' in iss
+    assert "Centre tools" in iss and 'String: "http://127.0.0.1:8765/exam/"' in iss

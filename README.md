@@ -84,6 +84,51 @@ exam code, then hold **Space** to talk; keys 1-5, Enter, Esc, R, N and P work to
 Browsers only allow the microphone on secure pages: `http://127.0.0.1` (PC mode) is
 fine, but a centre server reached over the network needs HTTPS (phase 3).
 
+## Exam screen
+
+The candidates' exam app (React and TypeScript, in `exam-app/`) is served at
+`http://127.0.0.1:8765/exam/`. Build it once on the build machine (needs Node.js; the
+result is in `src/voice_agent/exam/`, not kept in git):
+
+```bash
+cd exam-app
+npm install
+npm run build
+```
+
+On first use the invigilator enters the PC's device token; it is kept in the browser.
+Each candidate then sees a short starter guide, signs in with their examination number,
+checks their name and photo against the instructions, and takes the exam: the question
+bar per subject (answered, unanswered, marked to revisit), click to answer (saved at
+once), Revisit Later, a calculator, and a two-step submit with a summary. A reload or a
+dropped connection resumes the exam where it was. Keys: A to E answer, the arrows move.
+`npm run dev` serves it with live reloading against a service on port 8765.
+
+**Audio mode** (for blind and visually impaired candidates) is the same app, chosen on
+the sign-in screen ("Audio mode") and remembered by the PC. The candidate presses Space,
+hears a welcome, a sound in each ear, and a microphone check, then signs in by saying
+their examination number ("two zero two six … P for Papa, R for Romeo"); the service
+reads it back, and "yes" (or Enter) signs in, after which it says the candidate's name
+as the identity check. The invigilator can type the number instead. The exam is then
+spoken: hold Space to talk; keys 1 to 5 choose, Enter is yes, Esc no, R repeats, N and
+P move, F flags, T tells the time, and S submits (asked twice). The screen shows the
+question in large type and what is being said, for candidates with some sight and for
+the invigilator. After a reload, Space turns the sound back on and the question is read
+again. Browsers allow the microphone on this PC (`127.0.0.1`) or over HTTPS only.
+
+Candidates who read take the same exam on screen (standard mode), over the same
+WebSocket: `hello` with `"audio": false` (replies come as text, no speech is made), then
+`login` with the examination number alone. The service sends `details` (the exam's
+sections and, for the identity check, the candidate's name, number, seat and whether a
+photo is held: `GET /v1/sessions/{id}/photo` with the device token), a `question`
+message whenever a question becomes current (its text and options, verbatim), and a
+`state` after every change carrying the navigator: answered and flagged questions, the
+current answer, any pending confirmation, and how the exam ended. Clicks arrive as `act`
+messages, each the same action as its voice command, except that selecting an option
+saves it at once and stays on the question. Submitting still asks twice. Flags ("flag
+this", "which questions are flagged") are the candidate's own reminders and never reach
+the platform.
+
 ## Benchmark
 
 Run on the target machine and send back the printed table and `bench-report.json`:
@@ -98,6 +143,38 @@ the model path when a model is given), RAM per live session, and sessions per co
 With speech on, a synthetic voice also speaks commands as microphone audio, and the
 spoken row times the whole turn from releasing the talk key to the reply's first audio.
 
+## Exam store and cloud sync
+
+The centre runs exams from its own exam store (`[adapter] kind = "local"`): a SQLite
+database, `<data_dir>/exams.db`, holding exam papers, candidates (examination number,
+name, photo, audio mode) and every answer. Set it up and load papers with:
+
+```bash
+uv run python -m voice_agent.examstore init
+uv run python -m voice_agent.examstore import paper.zip     # or: sync pull
+uv run python -m voice_agent.examstore list
+uv run python -m voice_agent.examstore open EXAM_ID         # candidates may now sign in
+uv run python -m voice_agent.examstore sample practice.zip  # a practice paper to try
+```
+
+Candidates sign in with their examination number alone, among the open papers. Each gets
+their own version of the paper (questions shuffled within subjects, options shuffled
+unless the package keeps them), but answers are stored against the paper's own numbers
+and letters, so marking never needs to know about versions.
+
+Sync with the cloud is configured under `[sync]` (`url`, `centre_id`; the token goes in
+`<data_dir>/sync-token.txt`):
+
+```bash
+uv run python -m voice_agent.sync pull     # before the exam: download this centre's papers
+uv run python -m voice_agent.sync push     # after: upload every answer and submission
+uv run python -m voice_agent.sync status
+```
+
+The cloud implements the API in `spec/sync.openapi.json` (three calls). Retrying is
+always safe: the cloud must accept an operation it already holds without applying it
+again. `python -m voice_agent.sync.standin` is a stand-in cloud to develop against.
+
 ## Failure drills
 
 ```bash
@@ -110,7 +187,10 @@ state on disk as a real one on another machine would, breaks something, and chec
 a candidate cares about: the service killed mid-exam and while saving, the platform down
 at a save and at submit, the connection dropped mid-turn, the plug pulled at random while
 answers are being written (database integrity checked each time), and the model's server
-killed. A few of them also run in the test suite.
+killed. The last runs a centre on its exam store against the stand-in cloud, all as
+separate processes: papers pulled and opened, a candidate answers and submits, the cloud
+is down at the first upload and the service is killed, and the cloud must still end up
+with every result exactly once. A few of them also run in the test suite.
 
 ## Installer
 
@@ -122,17 +202,23 @@ uv run python -m tools.make_installer
 Builds `dist/voice-exam-setup-<version>.exe` (about 1.3 GB) with Inno Setup 6, which
 must be installed on the build machine. Running it needs administrator rights. It puts the
 program in Program Files and everything that changes in `C:\ProgramData\VoiceExam`: the
-configuration and device token (written on first install, kept on upgrade), sessions and
-logs. It installs and starts the Windows service, and adds Start-menu shortcuts to the
-exam page, the status page, the device token and the logs. Uninstalling removes the
+configuration and device token (written on first install, kept on upgrade), the exam
+store, sessions and logs. It installs and starts the Windows service, running on the exam
+store, and adds Start-menu shortcuts to the exam app, the status page, the configuration
+(set `[sync]` there), the device token, the logs, and "Centre tools": double-clicks to
+list, import, open and close papers, and to download papers and upload results (each asks
+for administrator rights). No candidate can sign in until a paper is loaded and opened.
+Building needs Node.js too: the bundle builds the exam app fresh. Uninstalling removes the
 service and the program but keeps `ProgramData\VoiceExam`, which may hold answers not yet
 delivered to the platform. It is not code-signed yet, so Windows warns before running it.
 
 ## Test bundle
 
 To try it on a PC with nothing installed, build a folder holding its own Python, the
-libraries, the models, and a config with a fresh device token (needs internet once, after
-`tools/fetch_models.py`; Windows only for now):
+libraries, the exam app (built fresh, so Node.js is needed), the models, and a config with
+a fresh device token (needs internet once, after `tools/fetch_models.py`; Windows only for
+now). It runs on the exam store, with the practice paper loaded on first start:
+examination numbers `20260001PR` to `20260008PR`, the last two registered for audio mode.
 
 ```bash
 uv run python -m tools.make_bundle --zip

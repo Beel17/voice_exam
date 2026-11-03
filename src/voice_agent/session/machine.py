@@ -6,7 +6,9 @@ comes back in as an event, so a session's state is exactly ``replay(its event lo
 
 Policy lives here too: every action is checked against the current state (question
 exists, option exists, something is pending, exam not ended) before anything changes.
-Answers change only after an explicit confirmation; submission needs two.
+Answers change only after an explicit confirmation; submission needs two. The one
+exception is a click on an option on the exam screen (``Select``, source ``SCREEN``):
+the click is the confirmation.
 
 Identification (verifying the candidate) happens before the first event and is not
 part of this machine; ``Started`` carries its result.
@@ -49,6 +51,7 @@ class Source(StrEnum):
     RULES = "rules"
     LLM = "llm"
     KEY = "key"
+    SCREEN = "screen"  # a click on the exam screen (standard mode)
 
 
 # --- Events (inputs; also what the event log stores) ------------------------------------
@@ -203,6 +206,8 @@ class Unsynced:
     question: int
     previous: OptionLetter | None
     written: OptionLetter | None
+    # Read the next question once saved: by voice, yes; a click on the screen stays put.
+    advance: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,6 +223,8 @@ class SessionState:
     # Option count of the current question; None until the first question is loaded.
     option_count: int | None = None
     answers: Mapping[int, OptionLetter] = field(default_factory=dict)
+    # Marked to revisit. The candidate's own reminder: never sent to the platform.
+    flagged: frozenset[int] = frozenset()
     pending: Pending | None = None
     # "Change 12 to A" while on question 5: answer once question 12 has loaded.
     answer_after_load: tuple[int, OptionLetter] | None = None
@@ -265,6 +272,9 @@ _PASSIVE: Final = (
     i.CountAnswered,
     i.ListUnanswered,
     i.ReviewAnswers,
+    i.Flag,
+    i.Unflag,
+    i.ListFlagged,
     i.Faster,
     i.Slower,
     i.NormalSpeed,
@@ -347,7 +357,7 @@ def snapshot(state: SessionState, time_left_s: int | None) -> StateMessage:
             choice=state.pending.choice,
         )
     elif state.phase in (Phase.CONFIRM_SUBMIT, Phase.CONFIRM_SUBMIT_FINAL):
-        pending = PendingConfirm(kind="submit")
+        pending = PendingConfirm(kind="submit", final=state.phase is Phase.CONFIRM_SUBMIT_FINAL)
     return StateMessage(
         question=state.current,
         of=state.question_count,
@@ -357,6 +367,11 @@ def snapshot(state: SessionState, time_left_s: int | None) -> StateMessage:
         pending_confirm=pending,
         speed=state.speed,
         cue_volume=state.cue_volume,
+        started=state.option_count is not None,
+        current_answer=state.answers.get(state.current),
+        answered_questions=tuple(sorted(state.answers)),
+        flagged=tuple(sorted(state.flagged)),
+        ended=state.end_reason,
     )
 
 
@@ -368,6 +383,9 @@ def _on_intent(state: SessionState, intent: i.Intent, source: Source) -> Step:
         state = replace(state, unclear_streak=state.unclear_streak + 1)
     else:
         state = replace(state, unclear_streak=0)
+
+    if isinstance(intent, i.Select) and source is not Source.SCREEN:
+        intent = i.NotAllowed()  # only a click saves without a yes; never words
 
     if state.phase is Phase.ENDED:
         assert state.end_reason is not None
@@ -423,6 +441,21 @@ def _listen(state: SessionState, intent: i.Intent) -> Step:
             return state, _say(r.IntroPrompt())
         case i.ChangeAnswer(args=i.ChangeAnswerArgs(question=None)) if not started:
             return state, _say(r.IntroPrompt())
+        case (
+            i.Flag(args=i.MaybeQuestionArgs(question=None))
+            | i.Unflag(args=i.MaybeQuestionArgs(question=None))
+        ) if not started:
+            return state, _say(r.IntroPrompt())
+
+        # A click on the screen: saved at once, but only for the question on screen.
+        case i.Select(args=i.SelectArgs(question=q)) if not started or q != n:
+            return state, _say(r.NotOnScreen(q))
+        case i.Select(args=i.SelectArgs(choice=choice)):
+            if choice == state.answers.get(n):
+                return state, ()  # already so: nothing to write
+            if choice is not None and (problem := _check_option(state, choice)) is not None:
+                return state, _say(problem)
+            return _write_answer(state, n, choice, advance=False)
 
         # Answering.
         case i.Answer(args=i.ChoiceArgs(choice=choice)):
@@ -509,6 +542,24 @@ def _listen(state: SessionState, intent: i.Intent) -> Step:
                 return state, _say(r.NoSuchQuestion(q, of))
             return state, _say(r.ReviewOne(q, state.answers.get(q)))
 
+        # Revisiting.
+        case i.Flag(args=i.MaybeQuestionArgs(question=q)):
+            target = q if q is not None else n
+            if target > of:
+                return state, _say(r.NoSuchQuestion(target, of))
+            already = target in state.flagged
+            flagged = state.flagged | {target}
+            return replace(state, flagged=flagged), _say(r.Flagged(target, already))
+        case i.Unflag(args=i.MaybeQuestionArgs(question=q)):
+            target = q if q is not None else n
+            if target > of:
+                return state, _say(r.NoSuchQuestion(target, of))
+            was = target in state.flagged
+            flagged = state.flagged - {target}
+            return replace(state, flagged=flagged), _say(r.Unflagged(target, was))
+        case i.ListFlagged():
+            return state, _say(r.FlaggedList(tuple(sorted(state.flagged))))
+
         # Listening comfort.
         case i.Faster():
             return _set_speed(state, state.speed_step + 1)
@@ -557,24 +608,7 @@ def _on_confirm(state: SessionState) -> Step:
     match state.phase:
         case Phase.CONFIRM_ANSWER:
             assert state.pending is not None
-            n, choice = state.pending.question, state.pending.choice
-            op = _operation_id(state)
-            answers = dict(state.answers)
-            previous = answers.pop(n, None)
-            if choice is not None:
-                answers[n] = choice
-            unsynced = {**state.unsynced, op: Unsynced(n, previous, choice)}
-            # The answer counts from here: it is in the event log and the outbox. The
-            # candidate hears "Saved" only once the platform's outcome comes back.
-            next_state = replace(
-                state,
-                phase=Phase.LISTEN,
-                pending=None,
-                answers=answers,
-                unsynced=unsynced,
-                awaiting=op,
-            )
-            return next_state, (SaveAnswer(n, choice, op),)
+            return _write_answer(state, state.pending.question, state.pending.choice)
         case Phase.CONFIRM_SUBMIT:
             unanswered = state.question_count - len(state.answers)
             return replace(state, phase=Phase.CONFIRM_SUBMIT_FINAL), _say(
@@ -588,6 +622,28 @@ def _on_confirm(state: SessionState) -> Step:
             op = _operation_id(state)
             next_state = replace(state, phase=Phase.SUBMITTING, submit_operation=op, awaiting=op)
             return next_state, (SubmitExam(op),)
+
+
+def _write_answer(
+    state: SessionState, n: int, choice: OptionLetter | None, *, advance: bool = True
+) -> Step:
+    op = _operation_id(state)
+    answers = dict(state.answers)
+    previous = answers.pop(n, None)
+    if choice is not None:
+        answers[n] = choice
+    unsynced = {**state.unsynced, op: Unsynced(n, previous, choice, advance)}
+    # The answer counts from here: it is in the event log and the outbox. The candidate
+    # hears "Saved" only once the platform's outcome comes back.
+    next_state = replace(
+        state,
+        phase=Phase.LISTEN,
+        pending=None,
+        answers=answers,
+        unsynced=unsynced,
+        awaiting=op,
+    )
+    return next_state, (SaveAnswer(n, choice, op),)
 
 
 def _drop_confirmation(state: SessionState) -> Step:
@@ -700,7 +756,7 @@ def _on_write_outcome(state: SessionState, event: WriteOutcome) -> Step:
 
 def _after_save(state: SessionState, write: Unsynced) -> tuple[Effect, ...]:
     """Save answer, then read the next question (design doc, conversation flow)."""
-    if write.written is None:  # clearing an answer is not answering; stay put
+    if write.written is None or not write.advance:  # clearing, or a click: stay put
         return ()
     if write.question >= state.question_count:
         return _say(r.AtLast(state.question_count))

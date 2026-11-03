@@ -14,7 +14,7 @@ from typing import Annotated, Any, Final, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
-from voice_agent.contract import Key, OptionLetter
+from voice_agent.contract import Act, Key, OptionLetter
 
 # Generous ceilings; the real limits come from the exam outline and are checked by policy.
 MAX_QUESTIONS: Final = 999
@@ -56,6 +56,12 @@ class ChangeAnswerArgs(BaseModel):
     model_config = _FROZEN
     choice: OptionLetter
     question: QuestionNumber | None = None
+
+
+class SelectArgs(BaseModel):
+    model_config = _FROZEN
+    question: QuestionNumber
+    choice: OptionLetter | None  # None clears the answer
 
 
 class SectionArgs(BaseModel):
@@ -284,6 +290,41 @@ class Help(_Action):
     args: NoArgs = NoArgs()
 
 
+# --- Not offered to the model ------------------------------------------------------------
+#
+# The model's list is the design doc's (ACTION_TYPES); these come from the rules or the
+# screen only. A model that names one gets Unclear, as for any unknown action.
+
+
+class Flag(_Action):
+    """Mark a question to revisit: the current one, or a numbered one."""
+
+    action: Literal["flag"] = "flag"
+    args: MaybeQuestionArgs = MaybeQuestionArgs()
+
+
+class Unflag(_Action):
+    """Remove a question's revisit mark."""
+
+    action: Literal["unflag"] = "unflag"
+    args: MaybeQuestionArgs = MaybeQuestionArgs()
+
+
+class ListFlagged(_Action):
+    """List the questions marked to revisit."""
+
+    action: Literal["list_flagged"] = "list_flagged"
+    args: NoArgs = NoArgs()
+
+
+class Select(_Action):
+    """A click on an option on the exam screen: saved at once, since the click is the
+    confirmation. Only ever made from an ``act`` message, never from words."""
+
+    action: Literal["select"] = "select"
+    args: SelectArgs
+
+
 # --- Outcomes that are not actions ------------------------------------------------------
 
 
@@ -332,14 +373,17 @@ Action = (
     | Help
 )
 
-# What understanding returns. ``Unclear`` and ``NotAllowed`` get a fixed reply and never
-# change session state.
-Intent = Annotated[Action | Unclear | NotAllowed, Field(discriminator="action")]
+LocalAction = Flag | Unflag | ListFlagged | Select
+
+# What the exam script acts on. ``Unclear`` and ``NotAllowed`` get a fixed reply and
+# never change session state.
+Intent = Annotated[Action | LocalAction | Unclear | NotAllowed, Field(discriminator="action")]
 
 ACTION_TYPES: Final[tuple[type[_Action], ...]] = get_args(Action)
+# Everything the model may produce.
 INTENT_TYPES: Final[tuple[type[_Action], ...]] = (*ACTION_TYPES, Unclear, NotAllowed)
 
-_intent_adapter: TypeAdapter[Action | Unclear | NotAllowed] = TypeAdapter(Intent)
+_intent_adapter: TypeAdapter[Action | LocalAction | Unclear | NotAllowed] = TypeAdapter(Intent)
 
 
 def intent_name(intent_type: type[_Action]) -> str:
@@ -364,7 +408,7 @@ def _args_type(intent_type: type[_Action]) -> type[BaseModel]:
     return args
 
 
-def llm_output_text(intent: Intent) -> str:
+def llm_output_text(intent: Action | LocalAction | Unclear | NotAllowed) -> str:
     """The canonical text of ``intent``: the only form the grammar can produce."""
     out: dict[str, Any] = {"action": intent.action}
     out.update({k: v for k, v in intent.args.model_dump().items() if v is not None})
@@ -410,6 +454,7 @@ def parse_llm_output(raw: str) -> Action | Unclear | NotAllowed:
         intent = _intent_adapter.validate_python(
             {"action": intent_name(intent_type), "args": args}, strict=True
         )
+        assert not isinstance(intent, LocalAction)  # not in _BY_NAME
     except (ValueError, ValidationError, KeyError, TypeError, AttributeError):
         return Unclear()
     # Accept only the canonical text: no nulls, no coerced values, no other spacing or
@@ -420,7 +465,7 @@ def parse_llm_output(raw: str) -> Action | Unclear | NotAllowed:
     return intent
 
 
-_KEY_ACTIONS: Final[dict[Key, Action]] = {
+_KEY_ACTIONS: Final[dict[Key, Action | LocalAction]] = {
     "1": Answer(args=ChoiceArgs(choice="A")),
     "2": Answer(args=ChoiceArgs(choice="B")),
     "3": Answer(args=ChoiceArgs(choice="C")),
@@ -431,9 +476,38 @@ _KEY_ACTIONS: Final[dict[Key, Action]] = {
     "P": Previous(),
     "Enter": Confirm(),
     "Esc": Cancel(),
+    "S": Submit(),
+    "F": Flag(),
+    "T": TimeLeft(),
 }
 
 
-def action_for_key(key: Key) -> Action:
+def action_for_key(key: Key) -> Action | LocalAction:
     """Keyboard fallback: each key is the same action as its voice command."""
     return _KEY_ACTIONS[key]
+
+
+def intent_for_act(act: Act) -> Action | LocalAction:
+    """A click on the exam screen: the same action as its voice command (``Act`` has
+    checked that each carries the arguments it needs)."""
+    match act.action:
+        case "select":
+            assert act.question is not None
+            return Select(args=SelectArgs(question=act.question, choice=act.choice))
+        case "go_to":
+            assert act.question is not None
+            return GoTo(args=QuestionArgs(question=act.question))
+        case "next":
+            return Next()
+        case "previous":
+            return Previous()
+        case "flag":
+            return Flag(args=MaybeQuestionArgs(question=act.question))
+        case "unflag":
+            return Unflag(args=MaybeQuestionArgs(question=act.question))
+        case "submit":
+            return Submit()
+        case "confirm":
+            return Confirm()
+        case "cancel":
+            return Cancel()

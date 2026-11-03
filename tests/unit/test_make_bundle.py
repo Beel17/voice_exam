@@ -32,7 +32,7 @@ def test_the_scripts_run_from_their_own_folder() -> None:
         if "python.exe" in text:
             # Wherever the drive is mounted, and whatever Python the PC has, if any.
             assert 'cd /d "%~dp0"' in text and "PYTHONNOUSERSITE=1" in text, name
-            assert '"%~dp0python\\python.exe"' in text, name
+            assert '"%~dp0python\\python.exe"' in text or "PY=%~dp0python\\python.exe" in text
     assert f"models/{make_bundle.LANGUAGE_MODEL}" in make_bundle.SCRIPTS["Measure this PC.bat"]
 
 
@@ -101,3 +101,24 @@ def test_the_windows_service_definition() -> None:
     # A running service and a black window would fight over the port: the start scripts
     # just open the page when the service is running.
     assert make_bundle.IF_SERVICE_RUNNING in make_bundle.SCRIPTS["run-service.bat"]
+
+
+def test_the_centres_tasks_ship_with_the_bundle() -> None:
+    tasks = make_bundle.centre_scripts(make_bundle.ENV)
+    for name, text in tasks.items():
+        assert make_bundle.SCRIPTS[name] == text, name
+    imported = make_bundle.SCRIPTS["Exam store - import a paper.bat"]
+    # Nothing typed: nothing done. A path dragged in keeps its quotes off.
+    assert imported.index("if not defined PACKAGE exit /b") < imported.index('PACKAGE:"=')
+    assert "voice_agent.sync push" in make_bundle.SCRIPTS["Sync - upload results.bat"]
+
+
+def test_the_practice_paper_is_loaded_on_first_start() -> None:
+    for name in ("run-service.bat", "Install as a Windows service.bat"):
+        script = make_bundle.SCRIPTS[name]
+        assert "if not exist data\\exams.db" in script, name
+        assert f"examstore open {make_bundle.PRACTICE_EXAM}" in script, name
+    # The service starts after the paper is loaded, so candidates can sign in at once.
+    run = make_bundle.SCRIPTS["run-service.bat"]
+    assert run.index("examstore open") < run.index("-m voice_agent\n")
+    assert make_bundle.EXAM_PAGE.endswith("/exam/")

@@ -57,6 +57,10 @@ class Script:
     def say(self, intent: i.Intent) -> str:
         return self.feed(m.Understood(intent=intent, source=m.Source.RULES))
 
+    def click(self, intent: i.Intent) -> str:
+        """A click on the exam screen (standard mode)."""
+        return self.feed(m.Understood(intent=intent, source=m.Source.SCREEN))
+
     def begin(self) -> str:
         return self.say(i.Confirm())
 

@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from voice_agent.adapters.base import (
     AdapterRejected,
     AdapterUnavailable,
+    CandidateProfile,
     CandidateSession,
     ExamOutline,
     Question,
@@ -72,6 +73,7 @@ _SubmitOp = tuple[str]
 @dataclass
 class _Candidate:
     exam: FixtureExam
+    reg_no: str
     started_at: float | None = None
     answers: dict[int, OptionLetter] = field(default_factory=dict)
     submitted: bool = False
@@ -100,7 +102,7 @@ class FakeAdapter:
                 if c.candidate_id in self._candidates:
                     raise ValueError(f"duplicate candidate_id {c.candidate_id}")
                 self._registrations[(c.reg_no, exam.exam_code)] = c.candidate_id
-                self._candidates[c.candidate_id] = _Candidate(exam)
+                self._candidates[c.candidate_id] = _Candidate(exam, c.reg_no)
 
         # Failure injection. ``unavailable`` fails every call before it does anything;
         # ``lose_next_acks`` applies the next N writes and then fails, as when the
@@ -248,6 +250,20 @@ class FakeAdapter:
         c.operations[operation_id] = op
         self._store()
         self._ack()
+
+    async def get_profile(self, candidate_id: str) -> CandidateProfile:
+        await self._enter()
+        c = self._candidate(candidate_id)
+        return CandidateProfile(
+            exam_number=c.reg_no,
+            full_name=f"Practice candidate {c.reg_no}",
+            exam_title=f"Practice exam {c.exam.exam_code}",
+        )
+
+    async def get_photo(self, candidate_id: str) -> bytes | None:
+        await self._enter()
+        self._candidate(candidate_id)
+        return None
 
     async def get_time_left(self, candidate_id: str) -> int:
         await self._enter()

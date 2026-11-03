@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict
 
 from voice_agent.api.runtime import Runtime
 from voice_agent.api.ws import token_allowed
+from voice_agent.session.manager import NotFound
 from voice_agent.speech import cues
 from voice_agent.speech.cues import CUE_NAMES
 
@@ -19,6 +20,19 @@ _bearer = HTTPBearer(auto_error=False)
 
 def runtime(request: Request) -> Runtime:
     rt: Runtime = request.app.state.runtime
+    return rt
+
+
+def device(
+    request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> Runtime:
+    """An exam PC: the device token it was issued at set-up."""
+    rt = runtime(request)
+    if credentials is None or not token_allowed(
+        credentials.credentials, rt.settings.device_token_sha256
+    ):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "device token required")
     return rt
 
 
@@ -133,6 +147,18 @@ async def cue(name: str) -> Response:
         media_type="audio/wav",
         headers={"Cache-Control": "public, max-age=86400"},
     )
+
+
+@router.get("/v1/sessions/{session_id}/photo")
+async def photo(session_id: str, rt: Annotated[Runtime, Depends(device)]) -> Response:
+    """The candidate's photo, for the identity check on their own exam PC."""
+    try:
+        data = await rt.manager.photo(session_id)
+    except NotFound:
+        data = None
+    if data is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no photo")
+    return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
 @router.get("/v1/status")

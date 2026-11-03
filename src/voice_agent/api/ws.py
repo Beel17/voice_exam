@@ -17,7 +17,7 @@ import hmac
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Final
+from typing import Final, Literal
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -28,10 +28,14 @@ from voice_agent.contract import (
     MAX_AUDIO_FRAME_BYTES,
     MAX_UTTERANCE_SECONDS,
     SCHEMA_VERSION,
+    Act,
     AudioEnd,
     BadMessage,
+    Details,
     Error,
     ErrorCode,
+    Guide,
+    GuideStep,
     Heard,
     Hello,
     KeyPress,
@@ -53,16 +57,25 @@ from voice_agent.runtime.limits import RateLimiter
 from voice_agent.runtime.pools import PoolBusy, Priority
 from voice_agent.session.manager import LiveSession, NotFound, SessionManager
 from voice_agent.session.replies import (
+    ConfirmExamNumber,
+    ExamNumberNotHeard,
+    GuideSays,
     IdentifyPrompt,
     KeyboardMode,
+    MicHeard,
+    NothingHeard,
     NotRegistered,
     OneMoment,
     PlatformUnavailable,
+    SignedInAs,
     TemplateReply,
     render,
 )
 from voice_agent.speech.stt import Recognizer
 from voice_agent.speech.tts import Synthesizer, split_sentences
+from voice_agent.understanding import grammar
+from voice_agent.understanding import intents as i
+from voice_agent.understanding.spelling import spoken_code
 
 log = logging.getLogger(__name__)
 
@@ -117,7 +130,9 @@ async def serve(
     hello = await _hello(ws, device_tokens)
     if hello is None:
         return
-    connection = _Connection(ws, manager, hub, max_messages_per_10s, recognizer, synthesizer)
+    # A screen that reads the exam itself gets replies as text alone.
+    voice = synthesizer if hello.audio else None
+    connection = _Connection(ws, manager, hub, max_messages_per_10s, recognizer, voice)
     try:
         await connection.start(hello)
         await connection.run()
@@ -181,6 +196,10 @@ class _Connection:
         self._capture: bytearray | None = None
         # Replies sent to the PC that it has not finished playing, for barge-in.
         self._playing: set[str] = set()
+        # Audio mode before sign-in: what the next thing heard is for, and the
+        # examination number heard and read back, waiting for a yes.
+        self._listening: Literal["mic", "number"] | None = None
+        self._heard_code: str | None = None
 
     async def start(self, hello: Hello) -> None:
         if hello.resume_session_id is not None:
@@ -218,7 +237,7 @@ class _Connection:
             case Ping():
                 await _send(self._ws, Pong())
             case Login(reg_no=reg_no, exam_code=exam_code) if self._session is None:
-                await self._login(reg_no, exam_code)
+                await self._login(reg_no, exam_code or "")
             case TextInput(text=text) if self._session is not None:
                 self._session.emit(
                     Heard(text=text, confidence=1.0, seq=self._session.state.seq + 1)
@@ -226,13 +245,19 @@ class _Connection:
                 await self._manager.handle_text(self._session, text)
             case KeyPress(key=key) if self._session is not None:
                 await self._manager.handle_key(self._session, key)
-            case TextInput() | KeyPress():
+            case Act() if self._session is not None:
+                await self._manager.handle_act(self._session, message)
+            case Guide(step=step) if self._session is None:
+                await self._guide(step)
+            case KeyPress(key="Enter" | "Esc" as key) if self._heard_code is not None:
+                await self._answer_read_back(key == "Enter")
+            case TextInput() | KeyPress() | Act():
                 await _send(self._ws, _error(ErrorCode.NOT_IDENTIFIED, "Sign in first."))
             case PlaybackDone(utterance_id=utterance_id):
                 self._playing.discard(utterance_id)
             case TalkStart() | TalkEnd() if self._recognizer is None:
                 await _send(self._ws, _error(ErrorCode.BAD_MESSAGE, "Audio is not enabled."))
-            case TalkStart() | TalkEnd() if self._session is None:
+            case TalkStart() | TalkEnd() if self._session is None and self._listening is None:
                 await _send(self._ws, _error(ErrorCode.NOT_IDENTIFIED, "Sign in first."))
             case TalkStart():
                 await self._talk_start()
@@ -274,16 +299,58 @@ class _Connection:
         pcm, self._capture = self._capture, None
         if pcm is None:
             return  # keyboard mode, or a second release: nothing was being captured
-        assert self._session is not None and self._recognizer is not None
+        assert self._recognizer is not None
         try:
             heard = await self._recognizer.recognize(bytes(pcm))
         except PoolBusy:
             await _send(self._ws, _error(ErrorCode.BUSY, "Recognition is busy."))
             await self._say(OneMoment())
             return
+        if self._session is None:
+            await _send(self._ws, Heard(text=heard.text, confidence=heard.confidence, seq=0))
+            await self._heard_before_sign_in(heard.text)
+            return
         session = self._session
         session.emit(Heard(text=heard.text, confidence=heard.confidence, seq=session.state.seq + 1))
         await self._manager.handle_text(session, heard.text, heard.confidence)
+
+    # --- Audio mode, before sign-in ---------------------------------------------------
+
+    async def _guide(self, step: GuideStep) -> None:
+        if step == "mic_check":
+            self._listening = "mic"
+        elif step == "sign_in":
+            self._listening, self._heard_code = "number", None
+        await self._say(GuideSays(step))
+
+    async def _heard_before_sign_in(self, text: str) -> None:
+        if not text.strip():
+            await self._say(NothingHeard())
+            return
+        if self._listening == "mic":
+            await self._say(MicHeard(text))
+            return
+        if self._heard_code is not None:
+            said = grammar.match(text)
+            if isinstance(said, i.Confirm | i.Cancel):
+                await self._answer_read_back(isinstance(said, i.Confirm))
+                return
+        # A number (or a corrected one): read back before anything is done with it.
+        code = spoken_code(text)
+        if code is None:
+            await self._say(ExamNumberNotHeard())
+            return
+        self._heard_code = code
+        await self._say(ConfirmExamNumber(code))
+
+    async def _answer_read_back(self, yes: bool) -> None:
+        code, self._heard_code = self._heard_code, None
+        if not yes or code is None:
+            await self._say(GuideSays("sign_in"))
+            return
+        await self._login(code, "")
+
+    # --- Signing in -------------------------------------------------------------------
 
     async def _login(self, reg_no: str, exam_code: str) -> None:
         try:
@@ -295,12 +362,20 @@ class _Connection:
             await _send(self._ws, _error(ErrorCode.ADAPTER_UNAVAILABLE, "Platform unreachable."))
             await self._say(PlatformUnavailable())
             return
-        await self._attach(session, session.resumed)
+        details = await self._manager.details(session)
+        if self._listening is not None and details.full_name:
+            # Signed in by voice: the name is the identity check a blind candidate can do.
+            await self._say(SignedInAs(details.full_name))
+        self._listening = None
+        await self._attach(session, session.resumed, details)
 
-    async def _attach(self, session: LiveSession, resumed: bool) -> None:
+    async def _attach(
+        self, session: LiveSession, resumed: bool, details: Details | None = None
+    ) -> None:
         await self._hub.take(session.session_id, self._ws)
         self._session = session
         await _send(self._ws, SessionInfo(session_id=session.session_id, resumed=resumed))
+        await _send(self._ws, details or await self._manager.details(session))
         self._writer = asyncio.create_task(self._write(session))
 
     async def _write(self, session: LiveSession) -> None:

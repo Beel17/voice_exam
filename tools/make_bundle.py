@@ -7,10 +7,13 @@
 Share the zip, never a folder that has been run: running leaves sessions behind (data/),
 and a tester signing in on someone else's sessions resumes their exam, finished or not.
 
-Run it once on a machine with internet, after tools/fetch_models.py. The folder holds its
-own Python, the libraries, the service, the models and a configuration with a fresh device
-token; copy it to a flash drive and run it anywhere, offline. It is for testing in PC mode:
-a centre's real set-up issues its own tokens.
+Run it once on a machine with internet and Node.js, after tools/fetch_models.py. The folder
+holds its own Python, the libraries, the service with the exam app built fresh from
+exam-app/, the models and a configuration with a fresh device token; copy it to a flash
+drive and run it anywhere, offline. It runs on the exam store, with the practice paper
+loaded on first start (eight practice candidates, two of them in audio mode), and has the
+centre's exam-store and sync tasks as double-clicks. It is for testing in PC mode: a
+centre's real set-up (tools/make_installer.py) issues its own tokens.
 """
 
 import argparse
@@ -24,6 +27,9 @@ from pathlib import Path
 from tools.setup_centre import write_config
 
 ROOT = Path(__file__).parents[1]
+EXAM_APP = ROOT / "exam-app"
+BUILT_APP = ROOT / "src" / "voice_agent" / "exam"
+PRACTICE_EXAM = "exam-sample-60"
 PYTHON = "3.12"
 LANGUAGE_MODEL = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
 # Downloads are already unpacked; the small model is only for comparison on slow PCs; and
@@ -80,6 +86,38 @@ if errorlevel 1 (
 )
 """
 IF_SERVICE_RUNNING = rf"""sc query {SERVICE_ID} 2>nul | find "RUNNING" >nul"""
+EXAM_PAGE = "http://127.0.0.1:8765/exam/"
+
+
+def centre_scripts(prefix: str) -> dict[str, str]:
+    """The centre's exam-store and sync tasks, one double-click each. ``prefix`` goes to the
+    program folder and sets up the environment, with ``%PY%`` as the bundled Python."""
+    py = '"%PY%"'
+    store, sync = f"{py} -m voice_agent.examstore", f"{py} -m voice_agent.sync"
+    # A path dragged onto the window arrives in quotes; they are taken off.
+    ask = (
+        'set "{name}="\n'
+        'set /p "{name}={question} "\n'
+        "if not defined {name} exit /b\n"
+        'set "{name}=%{name}:"=%"\n'
+    )
+    return {
+        "Exam store - list papers.bat": f"{prefix}{store} list\npause\n",
+        "Exam store - import a paper.bat": prefix
+        + ask.format(name="PACKAGE", question="Exam package (.zip) to import, or drag it here:")
+        + f'{store} import "%PACKAGE%"\n{store} list\npause\n',
+        "Exam store - open a paper for sign-in.bat": f"{prefix}{store} list\n"
+        + ask.format(name="EXAM", question="Exam ID to open for sign-in (as listed above):")
+        + f'{store} open "%EXAM%"\n{store} list\npause\n',
+        "Exam store - close a paper.bat": f"{prefix}{store} list\n"
+        + ask.format(name="EXAM", question="Exam ID to close (as listed above):")
+        + f'{store} close "%EXAM%"\n{store} list\npause\n',
+        "Sync - download papers.bat": f"{prefix}{sync} pull\n{store} list\npause\n",
+        "Sync - upload results.bat": f"{prefix}{sync} push\npause\n",
+        "Sync - status.bat": f"{prefix}{sync} status\npause\n",
+    }
+
+
 TOOLS = [
     "__init__.py",
     "bench.py",
@@ -107,32 +145,43 @@ cd /d "%~dp0"
 set PYTHONPATH=%~dp0lib;%~dp0
 set PYTHONNOUSERSITE=1
 set PYTHONUTF8=1
+set PY=%~dp0python\\python.exe
 """
-SCRIPTS = {
-    # run-service.bat [voice folder]: the service in this window, the exam page when ready.
-    "run-service.bat": ENV
-    + rf"""{IF_SERVICE_RUNNING} && (
+# The practice paper, loaded into the exam store on first start (and after "Start over").
+PRACTICE = rf"""if not exist data\exams.db (
+  echo Loading the practice paper into the exam store ...
+  "%PY%" -m voice_agent.examstore sample data\practice-paper.zip >nul
+  "%PY%" -m voice_agent.examstore import data\practice-paper.zip >nul
+  "%PY%" -m voice_agent.examstore open {PRACTICE_EXAM} >nul
+)
+"""
+SCRIPTS = (
+    {
+        # run-service.bat [voice folder]: the service in this window, the exam page when ready.
+        "run-service.bat": ENV
+        + rf"""{IF_SERVICE_RUNNING} && (
   echo The voice exam service is already running as a Windows service: opening the page.
-  start "" http://127.0.0.1:8765/
+  start "" {EXAM_PAGE}
   timeout /t 5 >nul
   exit /b
 )
 """
-    + r"""if not "%~1"=="" set VOICE_AGENT_SPEECH__VOICE_DIR=models/speech/tts/%~1
+        + PRACTICE
+        + r"""if not "%~1"=="" set VOICE_AGENT_SPEECH__VOICE_DIR=models/speech/tts/%~1
 echo Starting the voice exam service. Leave this window open; close it to stop.
 echo The exam page opens by itself when the service is ready.
 start "" /b "%~dp0python\python.exe" -m tools.open_client
 "%~dp0python\python.exe" -m voice_agent
 pause
 """,
-    "Open the exam page again.bat": """@echo off
-start "" http://127.0.0.1:8765/
+        "Open the exam page again.bat": f"""@echo off
+start "" {EXAM_PAGE}
 """,
-    "Show the service status.bat": """@echo off
+        "Show the service status.bat": """@echo off
 start "" http://127.0.0.1:8765/status
 """,
-    "Collect feedback.bat": ENV
-    + r"""if not exist feedback mkdir feedback
+        "Collect feedback.bat": ENV
+        + r"""if not exist feedback mkdir feedback
 "%~dp0python\python.exe" -m tools.export_sessions --data data --out feedback
 if not exist feedback\FEEDBACK-FORM.txt copy FEEDBACK-FORM.txt feedback\ >nul
 if exist bench-report.json copy /y bench-report.json feedback\ >nul
@@ -143,7 +192,7 @@ echo Fill in feedback\FEEDBACK-FORM.txt, then send the whole feedback folder bac
 start "" explorer "%~dp0feedback"
 pause
 """,
-    "Start over (delete test sessions).bat": rf"""@echo off
+        "Start over (delete test sessions).bat": rf"""@echo off
 cd /d "%~dp0"
 {IF_SERVICE_RUNNING} && (
   echo The voice exam service is running as a Windows service. Run "Remove the Windows
@@ -159,25 +208,28 @@ rmdir /s /q data
 echo Done.
 pause
 """,
-    "Diagnose the language model.bat": ENV
-    + r"""echo Trying the language model several ways. This takes a few minutes.
+        "Diagnose the language model.bat": ENV
+        + r"""echo Trying the language model several ways. This takes a few minutes.
 echo Close the service window first.
 "%~dp0python\python.exe" -m tools.diagnose_model
 echo.
 echo "Collect feedback" adds model-diagnosis.txt to the feedback folder.
 pause
 """,
-    "Measure this PC.bat": ENV
-    + rf"""echo Measuring this PC. This takes about five minutes; do not use the PC meanwhile.
+        "Measure this PC.bat": ENV
+        + rf"""echo Measuring this PC. This takes about five minutes; do not use the PC meanwhile.
 echo Close the service window first.
 "%~dp0python\python.exe" -m tools.bench --llm-model models/{LANGUAGE_MODEL} --out bench-report.json
 echo.
 echo Done. "Collect feedback" adds bench-report.json to the feedback folder.
 pause
 """,
-    "Install as a Windows service.bat": ELEVATE
-    + rf"""echo Installing the voice exam service: it will start with this PC, in the background,
-echo and restart itself if it ever stops. Close any black service window first.
+        "Install as a Windows service.bat": ELEVATE
+        + ENV.removeprefix("@echo off\n")
+        + PRACTICE
+        + rf"""echo Installing the voice exam service: it will start with this PC,
+echo in the background, and restart itself if it ever stops.
+echo Close any black service window first.
 {SERVICE_EXE} install || goto failed
 {SERVICE_EXE} start || goto failed
 echo.
@@ -189,17 +241,20 @@ echo.
 echo It did not work; the lines above say why.
 pause
 """,
-    "Remove the Windows service.bat": ELEVATE
-    + rf"""{SERVICE_EXE} stop
+        "Remove the Windows service.bat": ELEVATE
+        + rf"""{SERVICE_EXE} stop
 {SERVICE_EXE} uninstall
 echo.
 echo The service is removed. The folder and its test sessions are kept.
 pause
 """,
-} | {
-    f"Start exam - {name}.bat": f'@echo off\ncall "%~dp0run-service.bat" {folder}\n'
-    for name, folder in VOICES.items()
-}
+    }
+    | {
+        f"Start exam - {name}.bat": f'@echo off\ncall "%~dp0run-service.bat" {folder}\n'
+        for name, folder in VOICES.items()
+    }
+    | centre_scripts(ENV)
+)
 
 
 def main() -> None:
@@ -221,6 +276,8 @@ def main() -> None:
         raise SystemExit("WinSW is missing: run tools/fetch_models.py first")
     out.mkdir(parents=True)
 
+    print("exam app ...", flush=True)
+    _build_exam_app()
     print("python ...", flush=True)
     python = _copy_python(out / "python")
     print("libraries ...", flush=True)
@@ -264,6 +321,17 @@ def zip_bundle(folder: Path, archive: Path) -> Path:
             if path.is_file() and relative.parts[0] not in LOCAL_STATE:
                 z.write(path, Path(folder.name) / relative)
     return archive
+
+
+def _build_exam_app() -> None:
+    """The candidates' exam app, built fresh from exam-app/: never an old build."""
+    npm = shutil.which("npm")
+    if npm is None:
+        raise SystemExit("Node.js is needed to build the exam app: install it from nodejs.org")
+    subprocess.run([npm, "ci", "--no-audit", "--no-fund"], check=True, cwd=EXAM_APP)
+    subprocess.run([npm, "run", "build"], check=True, cwd=EXAM_APP)
+    if not (BUILT_APP / "index.html").is_file():
+        raise SystemExit(f"the exam app build did not produce {BUILT_APP / 'index.html'}")
 
 
 def _copy_python(dest: Path) -> Path:
