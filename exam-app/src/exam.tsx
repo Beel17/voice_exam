@@ -12,6 +12,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
+import { engine as onEngine } from "./address";
 import { AudioEngine } from "./audio/engine";
 import { Connection, type Closed, type Link } from "./connection";
 import type {
@@ -329,7 +330,7 @@ const photos = new Map<string, Promise<string | null>>();
 export function fetchPhoto(token: string, sessionId: string): Promise<string | null> {
   let photo = photos.get(sessionId);
   if (!photo) {
-    photo = fetch(`/v1/sessions/${encodeURIComponent(sessionId)}/photo`, {
+    photo = fetch(onEngine(`/v1/sessions/${encodeURIComponent(sessionId)}/photo`), {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(async (response) => (response.ok ? URL.createObjectURL(await response.blob()) : null))

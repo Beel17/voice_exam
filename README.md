@@ -129,6 +129,71 @@ saves it at once and stays on the question. Submitting still asks twice. Flags (
 this", "which questions are flagged") are the candidate's own reminders and never reach
 the platform.
 
+## On a centre server
+
+One machine can serve every candidate in the centre: install it there, then in its
+`centre.toml` set `mode = "server"` (it then listens on the LAN, not only on itself) and
+open its port (8765) in the firewall. Candidate PCs install nothing: they open
+`https://<server>:8765/exam/` in a browser, each with a device token (the server accepts
+one per PC, or one shared for a test).
+
+Audio mode across the LAN needs HTTPS, because browsers allow the microphone only over
+HTTPS or on the machine itself. Make a certificate for the server (needs openssl, which
+Git for Windows has) and name it under `[tls]`:
+
+```bash
+uv run python -m tools.make_certificate --name exam-server --ip 192.168.1.10 --out tls
+```
+
+```toml
+[tls]
+cert_file = "C:/ProgramData/VoiceExam/tls/exam-server.crt"
+key_file = "C:/ProgramData/VoiceExam/tls/exam-server.key"
+```
+
+Install the `.crt` on each candidate PC as a trusted root (double-click it: Install
+Certificate, Local Machine, Trusted Root Certification Authorities); a centre with its
+own certificate authority uses a certificate from it instead. With HTTPS on, the service
+serves only HTTPS, so the server's own shortcuts need `https://` too. Standard mode works
+over plain HTTP. In server mode, speech and the language model run on the server's CPU
+for every voice candidate; `tools.bench` measures how many it can carry.
+
+### The app inside a secure browser
+
+A secure browser can open `https://<server>:8765/exam/`, or carry the app's files itself.
+For that, `uv run python -m tools.make_browser_app` writes `dist/exam-app-<version>.zip`:
+the built app (relative paths, so it works from any folder) and `BUNDLING.txt`. Before
+compiling the browser, its team sets the engine's address in `engine-config.js`
+(`window.EXAM_ENGINE = "https://exam-server:8765";`), and the engine's configuration
+allows the browser's origin at the top level of `centre.toml`:
+`allowed_origins = ["app://exam-browser"]` (only those pages may then read the photo and
+the sound cues; the photo still needs the device token).
+
+### On a Linux server
+
+For an x86-64 Linux server with systemd (Ubuntu 22.04 or newer, or similar), build the
+package on the build machine (it carries the exam app already built, so the server needs
+no Node.js), copy it over, and install it as root:
+
+```bash
+uv run python -m tools.make_linux_package    # dist/voice-exam-linux-<version>.tar.gz
+```
+
+```bash
+tar xzf voice-exam-linux-0.1.0.tar.gz
+sudo voice-exam-linux-0.1.0/deploy/linux/install.sh    # or add: --models /path/to/models
+```
+
+It needs internet once, and `uv`. It installs the program in `/opt/voice-exam`, keeps
+everything that changes in `/var/lib/voice-exam`, runs it in server mode as the systemd
+service `voice-exam` (user `voiceexam`, logs in `journalctl -u voice-exam`), and adds the
+`voice-exam` command for the centre's tasks: `sudo voice-exam token`, `store list`,
+`store import PAPER.zip`, `store open EXAM_ID`, `sync pull`, `sync push`, `sync status`,
+and `certificate --name NAME --ip ADDRESS` (HTTPS, then a restart). Running the installer
+again upgrades the program and keeps the data; `deploy/linux/uninstall.sh` removes it
+(keeping the data unless given `--purge`). On a VM, give it the host's CPU features
+(AVX2), or the language model is switched off.
+
 ## Benchmark
 
 Run on the target machine and send back the printed table and `bench-report.json`:

@@ -3,8 +3,8 @@
     uv run python -m tools.fetch_models            # language and speech models (~2 GB)
     uv run python -m tools.fetch_models --no-small # skip the 0.5B comparison model
 
-On Windows, or on a Mac with Apple Silicon: each gets its own model server (and Windows the
-service wrapper); the models and voices are the same files everywhere.
+On Windows, a Mac with Apple Silicon, or x86-64 Linux: each gets its own model server (and
+Windows the service wrapper); the models and voices are the same files everywhere.
 
 Downloads pinned versions, checks each against its published SHA-256 while it streams,
 unpacks the llama.cpp server, and writes models/manifest.json with the SHA-256 of every
@@ -59,6 +59,18 @@ LLAMA_CPP_MACOS = Artifact(
     sha256="a39c5a9c4bbb5b989ed9274300629d5feb5920e52c3257a8e615f3868db44f35",
     size=12_116_141,
     file="downloads/llama-b11606-bin-macos-arm64.tar.gz",
+    unpack_to="llama-server",
+    inner="llama-b11606",
+)
+# llama.cpp's own build for x86-64 Linux, as on the Mac: unpacked straight to where the
+# service looks. It picks the fastest code for the processor at start-up, and needs the
+# system's OpenMP library (libgomp1; deploy/linux/install.sh installs it).
+LLAMA_CPP_LINUX = Artifact(
+    name="llama.cpp server b11606, Linux x86-64, CPU",
+    url="https://github.com/ggml-org/llama.cpp/releases/download/b11606/llama-b11606-bin-ubuntu-x64.tar.gz",
+    sha256="d7619f6f3d8d1f6c63641c0904abff560e9dfa8ec0bd5a57e36f424ac96fac55",
+    size=17_734_745,
+    file="downloads/llama-b11606-bin-ubuntu-x64.tar.gz",
     unpack_to="llama-server",
     inner="llama-b11606",
 )
@@ -143,6 +155,7 @@ WINSW = Artifact(
 SHARED = [QWEN_1_5B, QWEN_0_5B, ASR_KROKO, *VOICES]
 WINDOWS = [LLAMA_CPP, *SHARED, WINSW]
 MACOS = [LLAMA_CPP_MACOS, *SHARED]
+LINUX = [LLAMA_CPP_LINUX, *SHARED]
 ARTIFACTS = WINDOWS  # what the manifest lists unless told otherwise
 
 
@@ -152,7 +165,9 @@ def artifacts_for(platform: str, machine: str) -> list[Artifact]:
         return WINDOWS
     if platform == "darwin" and machine.lower() == "arm64":
         return MACOS
-    raise SystemExit("Pinned for Windows and Apple Silicon Macs only so far.")
+    if platform == "linux" and machine.lower() in ("x86_64", "amd64"):
+        return LINUX
+    raise SystemExit("Pinned for Windows, Apple Silicon Macs and x86-64 Linux only so far.")
 
 
 def sha256_of(path: Path) -> str:

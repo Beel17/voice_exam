@@ -14,6 +14,10 @@ models_dir = "models"
 # SHA-256 hex digests of the device tokens issued at set-up. Never put tokens here.
 device_token_sha256 = []
 
+# Only when the exam app is bundled inside a secure browser rather than served from here:
+# the browser's own origin, so its pages may call this engine.
+# allowed_origins = ["app://exam-browser"]
+
 [limits]
 max_utterance_chars = 300
 
@@ -39,6 +43,12 @@ recognition_workers = 1
 # python -m voice_agent.examstore (or download them with python -m voice_agent.sync pull),
 # then open a paper for candidates to sign in. "fake": built-in practice exams only.
 kind = "local"
+
+[tls]
+# HTTPS, for server mode: candidates' browsers allow the microphone (audio mode) only over
+# HTTPS. Paths to the certificate and its private key, both PEM. Leave unset in PC mode.
+# cert_file = "C:/ProgramData/VoiceExam/tls/exam-server.crt"
+# key_file = "C:/ProgramData/VoiceExam/tls/exam-server.key"
 
 [sync]
 # The cloud this centre downloads papers from and uploads results to. The centre's token

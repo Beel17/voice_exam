@@ -8,9 +8,9 @@ environment variables such as ``VOICE_AGENT_MODE=server`` or
 import os
 import tomllib
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 CONFIG_ENV_VAR = "VOICE_AGENT_CONFIG"
@@ -100,6 +100,27 @@ def pc_llm_threads() -> int:
     return min(6, max(2, (os.cpu_count() or 4) // 2))
 
 
+class TlsSettings(BaseModel):
+    """HTTPS, for a centre server that candidates' PCs reach over the LAN: browsers give a
+    page the microphone only over HTTPS (or on the PC itself), so audio mode needs it.
+    Both files are PEM. Unset: plain HTTP, which is all PC mode needs."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    cert_file: Path | None = None  # the certificate (with any intermediates after it)
+    key_file: Path | None = None  # its private key, unencrypted
+
+    @model_validator(mode="after")
+    def _both_or_neither(self) -> Self:
+        if (self.cert_file is None) != (self.key_file is None):
+            raise ValueError("set both tls.cert_file and tls.key_file, or neither")
+        return self
+
+    @property
+    def enabled(self) -> bool:
+        return self.cert_file is not None
+
+
 class SyncSettings(BaseModel):
     """The cloud the centre syncs with (python -m voice_agent.sync). Unset: no sync."""
 
@@ -132,11 +153,15 @@ class Settings(BaseSettings):
     # For the centre dashboard and the platform pulling audit logs; separate from devices.
     admin_token_sha256: tuple[TokenDigest, ...] = Field(default=(), max_length=100)
     time_warnings_min: tuple[int, ...] = (15, 5)
+    # Web origins, other than the engine's own, whose pages may call it: the exam app
+    # bundled inside a secure browser (for example "app://exam-browser"). Empty: none.
+    allowed_origins: tuple[str, ...] = Field(default=(), max_length=20)
     adapter: AdapterSettings = AdapterSettings()
     limits: LimitSettings = LimitSettings()
     llm: LlmSettings = LlmSettings()
     speech: SpeechSettings = SpeechSettings()
     sync: SyncSettings = SyncSettings()
+    tls: TlsSettings = TlsSettings()
 
     @property
     def llm_threads(self) -> int:

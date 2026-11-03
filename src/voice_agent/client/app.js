@@ -22,6 +22,7 @@ let socket = null;
 let sessionId = "";
 let lastSeq = null;
 let talking = false;
+let capture = null; // the microphone worklet, once started
 let cueVolume = 0.75;
 const chunker = new Chunker();
 const cueBuffers = new Map();
@@ -91,7 +92,7 @@ async function startMicrophone() {
     return;
   }
   await audio.audioWorklet.addModule("capture-worklet.js");
-  const capture = new AudioWorkletNode(audio, "capture");
+  capture = new AudioWorkletNode(audio, "capture");
   capture.port.onmessage = ({ data }) => {
     if (!talking) return;
     for (const frame of chunker.push(downsample(data, audio.sampleRate))) send(frame);
@@ -230,6 +231,7 @@ function startTalking() {
     return;
   }
   talking = true;
+  capture?.port.postMessage("on");
   $("talk").dataset.on = "true";
   stopPlayback(); // barge-in: silence at once, without waiting for the service
   playCue("listening");
@@ -240,6 +242,7 @@ function startTalking() {
 function stopTalking() {
   if (!talking) return;
   talking = false;
+  capture?.port.postMessage("off");
   $("talk").dataset.on = "false";
   for (const frame of chunker.flush()) send(frame);
   send({ type: "talk_end" });

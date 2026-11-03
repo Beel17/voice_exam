@@ -1,0 +1,27 @@
+# The voice exam engine as a systemd service (installed by deploy/linux/install.sh).
+[Unit]
+Description=Voice exam engine
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=voiceexam
+Group=voiceexam
+WorkingDirectory=/opt/voice-exam
+Environment=VOICE_AGENT_CONFIG=/var/lib/voice-exam/centre.toml
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/voice-exam/.venv/bin/python -m voice_agent
+# If it stops, systemd starts it again; the model server stops with it.
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+# It writes only its data folder.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/voice-exam
+
+[Install]
+WantedBy=multi-user.target

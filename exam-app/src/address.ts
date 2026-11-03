@@ -1,0 +1,25 @@
+// Where the exam engine is. Served by the engine, the app uses the engine's own address.
+// Bundled inside a secure browser, the app's files are local, so engine-config.js (beside
+// index.html, edited before the browser is compiled) names the engine instead.
+
+declare global {
+  interface Window {
+    EXAM_ENGINE?: string;
+  }
+}
+
+/** The engine's base address, like "https://exam-server:8765", with no trailing slash. */
+export function engineUrl(): string {
+  const configured = (window.EXAM_ENGINE ?? "").trim().replace(/\/+$/, "");
+  return configured || location.origin;
+}
+
+/** An address on the engine: ``path`` starts with "/v1/". */
+export function engine(path: string): string {
+  return `${engineUrl()}${path}`;
+}
+
+/** The engine's WebSocket address for ``path``: wss:// when the engine is https://. */
+export function engineSocket(path: string): string {
+  return engine(path).replace(/^http/, "ws");
+}

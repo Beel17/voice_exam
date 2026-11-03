@@ -2,6 +2,7 @@
 // the session, so a dropped network or a restarted service costs the candidate nothing:
 // every answer is already saved on the service before the screen shows it.
 
+import { engineSocket } from "./address";
 import { SCHEMA_VERSION, type ClientMessage, type ServerMessage } from "./protocol";
 
 export type Link = "connecting" | "online" | "offline";
@@ -36,8 +37,7 @@ export class Connection {
   open(): void {
     this.stopped = false;
     this.on.link("connecting");
-    const scheme = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${scheme}://${location.host}/v1/session`);
+    const ws = new WebSocket(engineSocket("/v1/session"));
     ws.binaryType = "arraybuffer";
     this.ws = ws;
     ws.onopen = () => {

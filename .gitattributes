@@ -1,0 +1,3 @@
+# Scripts for Linux servers keep Unix line endings, whatever the checkout does.
+deploy/linux/* text eol=lf
+*.sh text eol=lf

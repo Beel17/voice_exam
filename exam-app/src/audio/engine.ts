@@ -2,6 +2,7 @@
 // played back without gaps, sound cues, and the tones of the headphone check. Everything
 // the candidate hears in words comes from the service; this only records and plays.
 
+import { engine } from "../address";
 import { Chunker, DOWN_RATE, downsample, pcm16ToFloat, Playback } from "./pcm";
 
 const CUES = ["listening", "saved", "not_understood", "time_warning"] as const;
@@ -17,6 +18,7 @@ export class AudioEngine {
   private cues = new Map<string, AudioBuffer>();
   private chunker = new Chunker();
   private talking = false;
+  private capture: AudioWorkletNode | null = null;
   // After barge-in, the rest of the silenced reply may still be arriving: it is dropped
   // until the service starts a new one.
   private muted = false;
@@ -69,7 +71,7 @@ export class AudioEngine {
     );
     await Promise.all(
       CUES.map(async (name) => {
-        const response = await fetch(`/v1/cues/${name}.wav`);
+        const response = await fetch(engine(`/v1/cues/${name}.wav`));
         this.cues.set(name, await ctx.decodeAudioData(await response.arrayBuffer()));
       }),
     ).catch(() => undefined); // cues are a help, not a requirement
@@ -90,6 +92,7 @@ export class AudioEngine {
     }
     await ctx.audioWorklet.addModule(`${base}capture-worklet.js`);
     const capture = new AudioWorkletNode(ctx, "capture");
+    this.capture = capture;
     capture.port.onmessage = ({ data }: MessageEvent<Float32Array>) => {
       if (!this.talking) return;
       for (const frame of this.chunker.push(downsample(data, ctx.sampleRate))) this.io.sendAudio(frame);
@@ -161,6 +164,7 @@ export class AudioEngine {
   startTalking(): boolean {
     if (this.talking || !this.ctx) return false;
     this.talking = true;
+    this.capture?.port.postMessage("on");
     this.muted = true;
     this.stopAll();
     this.playCue("listening");
@@ -172,6 +176,7 @@ export class AudioEngine {
   stopTalking(): boolean {
     if (!this.talking) return false;
     this.talking = false;
+    this.capture?.port.postMessage("off");
     for (const frame of this.chunker.flush()) this.io.sendAudio(frame);
     this.io.sendJson({ type: "talk_end" });
     return true;

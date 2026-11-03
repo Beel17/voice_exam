@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Final
 
 from fastapi import FastAPI, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -115,6 +116,15 @@ def create_app(
     # No interactive docs: they load assets from the internet, and the service is offline.
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.include_router(http.router)
+    if settings.allowed_origins:
+        # The exam app bundled in a secure browser reads the photo and the sound cues from
+        # here. Read-only calls only; the photo still needs the device token.
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(settings.allowed_origins),
+            allow_methods=["GET"],
+            allow_headers=["Authorization"],
+        )
     # The voice client for the exam PC, served by the service itself for testing until the
     # centres' secure browser is known. Windows can map .js to text/plain from its registry,
     # and browsers refuse to run a module served that way.

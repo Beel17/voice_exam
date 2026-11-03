@@ -1,0 +1,56 @@
+#!/bin/sh
+# The centre's tasks on a Linux server, as the service's user, with its configuration.
+#
+#   sudo voice-exam store list | import PAPER.zip | open EXAM_ID | close EXAM_ID
+#   sudo voice-exam sync pull | push | status
+#   sudo voice-exam token
+#   sudo voice-exam certificate --name NAME --ip ADDRESS     # HTTPS, then restarts
+set -eu
+PREFIX=/opt/voice-exam
+DATA=/var/lib/voice-exam
+PY="$PREFIX/.venv/bin/python"
+
+[ "$(id -u)" -eq 0 ] || { echo "use: sudo voice-exam ..." >&2; exit 1; }
+as_service() {
+  cd "$PREFIX"
+  runuser -u voiceexam -- env VOICE_AGENT_CONFIG="$DATA/centre.toml" "$PY" -m "$@"
+}
+
+command="${1:-}"
+[ $# -gt 0 ] && shift
+case "$command" in
+  store)
+    if [ "${1:-}" = import ] && [ -n "${2:-}" ]; then
+      # The service's user may not be allowed to read the file where it is: copy it in.
+      mkdir -p "$DATA/incoming"
+      cp "$2" "$DATA/incoming/"
+      chown -R voiceexam: "$DATA/incoming"
+      set -- import "$DATA/incoming/$(basename "$2")"
+    fi
+    as_service voice_agent.examstore "$@"
+    ;;
+  sync)
+    as_service voice_agent.sync "$@"
+    ;;
+  token)
+    cat "$DATA/DEVICE-TOKEN.txt"
+    ;;
+  certificate)
+    name=""
+    previous=""
+    for arg in "$@"; do
+      [ "$previous" = --name ] && name="$arg"
+      previous="$arg"
+    done
+    [ -n "$name" ] || { echo "use: sudo voice-exam certificate --name NAME --ip ADDRESS" >&2; exit 2; }
+    as_service tools.make_certificate --out "$DATA/tls" "$@"
+    as_service tools.setup_centre --data "$DATA" --tls "$name"
+    systemctl restart voice-exam
+    echo "HTTPS is on: https://$name:8765/exam/"
+    echo "Install $DATA/tls/$name.crt on each candidate PC as a trusted root."
+    ;;
+  *)
+    sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'
+    exit 2
+    ;;
+esac

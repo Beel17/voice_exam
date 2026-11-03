@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from tools import make_bundle, make_mac_bundle
-from tools.fetch_models import MACOS, WINDOWS, artifacts_for, unpack
+from tools.fetch_models import LINUX, MACOS, WINDOWS, artifacts_for, unpack
 
 SCRIPTS = make_mac_bundle.SCRIPTS
 
@@ -74,7 +74,10 @@ def test_each_computer_fetches_its_own_model_server() -> None:
     assert artifacts_for("darwin", "arm64") == MACOS
     assert [a for a in MACOS if a not in WINDOWS] == [MACOS[0]]  # models and voices shared
     assert MACOS[0].unpack_to == "llama-server"  # where the service looks for it
-    for platform, machine in (("darwin", "x86_64"), ("linux", "x86_64")):
+    assert artifacts_for("linux", "x86_64") == LINUX
+    assert [a for a in LINUX if a not in WINDOWS] == [LINUX[0]]
+    assert LINUX[0].unpack_to == "llama-server" and "ubuntu-x64" in LINUX[0].url
+    for platform, machine in (("darwin", "x86_64"), ("linux", "aarch64")):
         with pytest.raises(SystemExit):
             artifacts_for(platform, machine)
 
