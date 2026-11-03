@@ -1,5 +1,13 @@
 # Voice Exam Agent
 
+> **Branch `voice-only`: the voice-only demo build.** This is the service as it was before
+> the exam app (commit 0251444): the practice platform and the original voice client. It
+> differs only in identity, so it installs beside the main build on the same PC: it is
+> "Voice Exam (voice only)", service `VoiceExamVoiceOnly`, data in
+> `C:\ProgramData\VoiceExamVoiceOnly`, port 8775 (its model server on 8776). Build its
+> installer the same way (below); it writes `dist/voice-exam-voice-only-setup-<version>.exe`.
+> The models are not in git: copy or link `models/` from the main checkout first.
+
 Offline, CPU-only voice service that lets blind candidates take computer-based exams by
 conversation. The design doc ("Voice Exam Agent — Service Design") is the source of truth.
 

@@ -33,7 +33,7 @@ LEAVE_OUT_OF_MODELS = {"downloads", "qwen2.5-0.5b-instruct-q4_k_m.gguf", "llama.
 # WinSW runs the service as a Windows service: the program is renamed after the service and
 # finds its settings in the .xml file of the same name beside it.
 SERVICE_EXE = "voice-exam-service.exe"
-SERVICE_ID = "VoiceExam"
+SERVICE_ID = "VoiceExamVoiceOnly"
 
 
 def service_xml(logs: str, config: str) -> str:
@@ -41,7 +41,7 @@ def service_xml(logs: str, config: str) -> str:
     return rf"""<!-- The voice exam service as a Windows service (WinSW 2); %BASE% is here. -->
 <service>
   <id>{SERVICE_ID}</id>
-  <name>Voice Exam</name>
+  <name>Voice Exam (voice only)</name>
   <description>Offline voice service for blind candidates taking computer-based exams.</description>
   <executable>%BASE%\python\python.exe</executable>
   <arguments>-m voice_agent</arguments>

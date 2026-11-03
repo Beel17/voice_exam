@@ -6,7 +6,7 @@
 mode = "pc"
 
 # host = "127.0.0.1"   # leave unset to use the mode's default
-port = 8765
+port = 8775
 
 data_dir = "data"
 models_dir = "models"
@@ -18,6 +18,7 @@ device_token_sha256 = []
 max_utterance_chars = 300
 
 [llm]
+port = 8776
 # Set enabled = false to run on rules only (no language model at all).
 enabled = true
 server_binary = "models/llama-server/llama-server"

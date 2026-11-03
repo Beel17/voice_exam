@@ -5,11 +5,11 @@
 
 Takes the program from a built bundle (its Python, libraries, models and WinSW) and writes
 dist/voice-exam-setup-<version>.exe. Installing it, which needs administrator rights:
-puts the program in Program Files; puts everything that changes in ProgramData\\VoiceExam
+puts the program in Program Files; puts everything that changes in ProgramData\\VoiceExamVoiceOnly
 (the configuration and device token, written on first install and kept from then on;
 sessions; logs); installs and starts the Windows service; adds Start-menu shortcuts to
 the exam page, the status page, the device token and the logs. Uninstalling stops and
-removes the service and the program, and keeps ProgramData\\VoiceExam: it may hold
+removes the service and the program, and keeps ProgramData\\VoiceExamVoiceOnly: it may hold
 answers not yet delivered to the platform. Installing again over it is an upgrade.
 """
 
@@ -25,9 +25,9 @@ from tools.make_bundle import SERVICE_EXE, SERVICE_ID, service_xml
 ROOT = Path(__file__).parents[1]
 ISCC: Final = Path.home() / "AppData" / "Local" / "Programs" / "Inno Setup 6" / "ISCC.exe"
 # Identifies this product to Windows across versions, so a new setup.exe upgrades it.
-APP_ID: Final = "{8F3C9A2E-5D41-4B7A-9E16-2C7F0B4D8A53}"
-DATA: Final = r"{commonappdata}\VoiceExam"  # Inno Setup's name for C:\ProgramData
-PAGE: Final = "http://127.0.0.1:8765/"
+APP_ID: Final = "{3B7E1D94-6A2C-4F58-8D03-91C5E7A2B6F4}"
+DATA: Final = r"{commonappdata}\VoiceExamVoiceOnly"  # Inno Setup's name for C:\ProgramData
+PAGE: Final = "http://127.0.0.1:8775/"
 PROGRAM_PARTS: Final = ("python", "lib", "tools", "models")
 
 
@@ -45,23 +45,23 @@ def script(bundle: Path, stage: Path, version: str) -> str:
     return rf"""; Written by tools/make_installer.py; do not edit by hand.
 [Setup]
 AppId={{{APP_ID}
-AppName=Voice Exam
+AppName=Voice Exam (voice only)
 AppVersion={version}
-AppVerName=Voice Exam {version}
-DefaultDirName={{autopf}}\Voice Exam
+AppVerName=Voice Exam (voice only) {version}
+DefaultDirName={{autopf}}\Voice Exam (voice only)
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 OutputDir={ROOT / "dist"}
-OutputBaseFilename=voice-exam-setup-{version}
+OutputBaseFilename=voice-exam-voice-only-setup-{version}
 ; The models are already compressed: fast compression, nothing to gain from more.
 Compression=lzma2/fast
 SolidCompression=no
 WizardStyle=modern
 SetupLogging=yes
-UninstallDisplayName=Voice Exam
+UninstallDisplayName=Voice Exam (voice only)
 CloseApplications=no
 
 [Dirs]
@@ -78,10 +78,10 @@ Filename: "{{app}}\Voice exam page.url"; Section: "InternetShortcut"; Key: "URL"
 Filename: "{{app}}\Voice exam status.url"; Section: "InternetShortcut"; Key: "URL"; String: "{PAGE}status"
 
 [Icons]
-Name: "{{autoprograms}}\Voice Exam\Voice exam page"; Filename: "{{app}}\Voice exam page.url"
-Name: "{{autoprograms}}\Voice Exam\Voice exam status"; Filename: "{{app}}\Voice exam status.url"
-Name: "{{autoprograms}}\Voice Exam\Device token"; Filename: "{DATA}\DEVICE-TOKEN.txt"
-Name: "{{autoprograms}}\Voice Exam\Logs"; Filename: "{DATA}\logs"
+Name: "{{autoprograms}}\Voice Exam (voice only)\Voice exam page"; Filename: "{{app}}\Voice exam page.url"
+Name: "{{autoprograms}}\Voice Exam (voice only)\Voice exam status"; Filename: "{{app}}\Voice exam status.url"
+Name: "{{autoprograms}}\Voice Exam (voice only)\Device token"; Filename: "{DATA}\DEVICE-TOKEN.txt"
+Name: "{{autoprograms}}\Voice Exam (voice only)\Logs"; Filename: "{DATA}\logs"
 
 [Run]
 Filename: "{{app}}\python\python.exe"; Parameters: {setup_args}; WorkingDir: "{{app}}"; StatusMsg: "Setting up this PC..."; Flags: runhidden waituntilterminated
@@ -129,14 +129,14 @@ def main() -> None:
     stage = ROOT / "build" / "installer"
     stage.mkdir(parents=True, exist_ok=True)
     (stage / "voice-exam-service.xml").write_text(
-        service_xml(r"%ProgramData%\VoiceExam\logs", r"%ProgramData%\VoiceExam\centre.toml"),
+        service_xml(r"%ProgramData%\VoiceExamVoiceOnly\logs", r"%ProgramData%\VoiceExamVoiceOnly\centre.toml"),
         encoding="utf-8",
     )
     iss = stage / "voice-exam.iss"
     iss.write_text(script(bundle, stage, version), encoding="utf-8")
     print(f"compiling {iss.name} (several minutes: the models are 1.3 GB) ...", flush=True)
     subprocess.run([str(ISCC), "/Q", str(iss)], check=True)
-    setup = ROOT / "dist" / f"voice-exam-setup-{version}.exe"
+    setup = ROOT / "dist" / f"voice-exam-voice-only-setup-{version}.exe"
     print(f"done: {setup} ({setup.stat().st_size / 2**30:.2f} GB); service {SERVICE_ID}")
 
 
