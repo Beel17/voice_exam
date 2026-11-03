@@ -107,12 +107,14 @@ async def test_a_failing_server_is_retried_less_and_less_often(tmp_path: Path) -
     s = server(tmp_path, "--exit-at-start")
     with pytest.raises(ModelServerFailed):
         await s.ensure_running()
-    assert 4 < s.retry_in_s <= 5
+    # The upper bounds allow for rounding: Windows' clock often has not ticked since the
+    # failure, and (now + 10) - now can come out a hair over 10.
+    assert 4 < s.retry_in_s < 5.001
     assert await s.ensure_running() is False  # too soon: not even tried
     s._next_try = 0.0
     with pytest.raises(ModelServerFailed):
         await s.ensure_running()
-    assert 9 < s.retry_in_s <= 10
+    assert 9 < s.retry_in_s < 10.001
     assert s.failures == 2
 
 
