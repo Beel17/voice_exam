@@ -3,6 +3,9 @@
     uv run python -m tools.fetch_models            # language and speech models (~2 GB)
     uv run python -m tools.fetch_models --no-small # skip the 0.5B comparison model
 
+On Windows, or on a Mac with Apple Silicon: each gets its own model server (and Windows the
+service wrapper); the models and voices are the same files everywhere.
+
 Downloads pinned versions, checks each against its published SHA-256 while it streams,
 unpacks the llama.cpp server, and writes models/manifest.json with the SHA-256 of every
 file. Copy the whole models/ folder with the package; at start-up the service checks the
@@ -12,6 +15,7 @@ files it uses against the manifest, so every centre runs exactly the same models
 import argparse
 import hashlib
 import json
+import platform
 import sys
 import tarfile
 import time
@@ -35,6 +39,7 @@ class Artifact:
     file: str  # where it is saved under models/
     unpack_to: str | None = None  # for archives: the folder to extract into
     optional: bool = False
+    inner: str | None = None  # the archive's own top folder, left out when unpacking
 
 
 LLAMA_CPP = Artifact(
@@ -44,6 +49,18 @@ LLAMA_CPP = Artifact(
     size=19_514_151,
     file="downloads/llama-b11606-bin-win-cpu-x64.zip",
     unpack_to="llama.cpp",
+)
+# llama.cpp's own build for Apple Silicon, unpacked straight to where the service looks.
+# Unlike Windows, nothing needs building: the libraries beside it are the system's and its
+# own, found from its folder. It runs the model on the Mac's graphics chip.
+LLAMA_CPP_MACOS = Artifact(
+    name="llama.cpp server b11606, macOS Apple Silicon",
+    url="https://github.com/ggml-org/llama.cpp/releases/download/b11606/llama-b11606-bin-macos-arm64.tar.gz",
+    sha256="a39c5a9c4bbb5b989ed9274300629d5feb5920e52c3257a8e615f3868db44f35",
+    size=12_116_141,
+    file="downloads/llama-b11606-bin-macos-arm64.tar.gz",
+    unpack_to="llama-server",
+    inner="llama-b11606",
 )
 QWEN_1_5B = Artifact(
     name="Qwen2.5 1.5B Instruct, Q4_K_M (Apache-2.0)",
@@ -123,7 +140,19 @@ WINSW = Artifact(
     file="winsw/WinSW-x64.exe",
 )
 
-ARTIFACTS = [LLAMA_CPP, QWEN_1_5B, QWEN_0_5B, ASR_KROKO, *VOICES, WINSW]
+SHARED = [QWEN_1_5B, QWEN_0_5B, ASR_KROKO, *VOICES]
+WINDOWS = [LLAMA_CPP, *SHARED, WINSW]
+MACOS = [LLAMA_CPP_MACOS, *SHARED]
+ARTIFACTS = WINDOWS  # what the manifest lists unless told otherwise
+
+
+def artifacts_for(platform: str, machine: str) -> list[Artifact]:
+    """What this computer's models folder needs, or exit saying it is not pinned yet."""
+    if platform == "win32":
+        return WINDOWS
+    if platform == "darwin" and machine.lower() == "arm64":
+        return MACOS
+    raise SystemExit("Pinned for Windows and Apple Silicon Macs only so far.")
 
 
 def sha256_of(path: Path) -> str:
@@ -180,13 +209,21 @@ def _download(artifact: Artifact, target: Path) -> Path:
     return target
 
 
-def unpack(archive: Path, into: Path) -> None:
+def unpack(archive: Path, into: Path, inner: str | None = None) -> None:
     into = into.resolve()
-    if archive.name.endswith(".tar.bz2"):
-        with tarfile.open(archive, "r:bz2") as tf:
+    if archive.name.endswith((".tar.bz2", ".tar.gz")):
+
+        def keep(member: tarfile.TarInfo, path: str) -> tarfile.TarInfo | None:
+            if inner is not None:
+                if member.name.rstrip("/") == inner:
+                    return None
+                member = member.replace(name=member.name.removeprefix(f"{inner}/"))
             # The "data" filter refuses absolute paths, "..", links out of the folder
             # and device files: the archive can only ever write plain files inside it.
-            tf.extractall(into, filter="data")
+            return tarfile.data_filter(member, path)
+
+        with tarfile.open(archive) as tf:
+            tf.extractall(into, filter=keep)
         return
     with zipfile.ZipFile(archive) as zf:
         for member in zf.namelist():
@@ -196,13 +233,13 @@ def unpack(archive: Path, into: Path) -> None:
         zf.extractall(into)
 
 
-def write_manifest(models: Path) -> Path:
+def write_manifest(models: Path, artifacts: list[Artifact] = ARTIFACTS) -> Path:
     files = {
         p.relative_to(models).as_posix(): sha256_of(p)
         for p in sorted(models.rglob("*"))
         if p.is_file() and p.name != "manifest.json" and "downloads" not in p.parts
     }
-    sources = [{"name": a.name, "url": a.url, "sha256": a.sha256} for a in ARTIFACTS]
+    sources = [{"name": a.name, "url": a.url, "sha256": a.sha256} for a in artifacts]
     manifest = models / "manifest.json"
     manifest.write_text(json.dumps({"files": files, "sources": sources}, indent=2) + "\n")
     return manifest
@@ -213,9 +250,8 @@ def main() -> None:
     parser.add_argument("--models", type=Path, default=MODELS)
     parser.add_argument("--no-small", action="store_true", help="skip the 0.5B model")
     args = parser.parse_args()
-    if sys.platform != "win32":
-        raise SystemExit("Only the Windows build is pinned so far; Linux comes with packaging.")
-    for artifact in ARTIFACTS:
+    artifacts = artifacts_for(sys.platform, platform.machine())
+    for artifact in artifacts:
         if artifact.optional and args.no_small:
             continue
         print(f"{artifact.name} ({artifact.size / 2**20:,.0f} MB)")
@@ -225,9 +261,9 @@ def main() -> None:
             marker = path.with_name(path.name + ".unpacked")
             if marker.is_file() and marker.read_text() == artifact.sha256:
                 continue
-            unpack(path, args.models / artifact.unpack_to)
+            unpack(path, args.models / artifact.unpack_to, artifact.inner)
             marker.write_text(artifact.sha256)
-    manifest = write_manifest(args.models)
+    manifest = write_manifest(args.models, artifacts)
     print(f"wrote {manifest}")
 
 

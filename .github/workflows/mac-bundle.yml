@@ -1,0 +1,32 @@
+name: mac-bundle
+
+# Builds the Mac test bundle on an Apple Silicon Mac, starts it once to prove it runs, and
+# keeps the zip for two weeks: Actions, then this workflow, then "Run workflow"; the zip is
+# under the run's Artifacts. Run by hand: it downloads about 1.4 GB of models each time
+# they are not in the cache.
+on:
+  workflow_dispatch:
+
+jobs:
+  bundle:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: uv sync --locked --python 3.12
+      - uses: actions/cache@v4
+        with:
+          path: models
+          key: models-macos-arm64-${{ hashFiles('tools/fetch_models.py') }}
+      - run: uv run python -m tools.fetch_models --no-small
+      - run: uv run python -m tools.make_mac_bundle --zip --check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voice-exam-mac
+          path: dist/voice-exam-mac.zip
+          compression-level: 0 # already a zip
+          retention-days: 14

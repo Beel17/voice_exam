@@ -216,8 +216,8 @@ delivered to the platform. It is not code-signed yet, so Windows warns before ru
 
 To try it on a PC with nothing installed, build a folder holding its own Python, the
 libraries, the exam app (built fresh, so Node.js is needed), the models, and a config with
-a fresh device token (needs internet once, after `tools/fetch_models.py`; Windows only for
-now). It runs on the exam store, with the practice paper loaded on first start:
+a fresh device token (needs internet once, after `tools/fetch_models.py`). It runs on the
+exam store, with the practice paper loaded on first start:
 examination numbers `20260001PR` to `20260008PR`, the last two registered for audio mode.
 
 ```bash
@@ -239,6 +239,19 @@ opens the exam page when it is ready; "Collect feedback", which writes each sess
 readable transcript (`tools/export_sessions.py`) next to a feedback form; "Start over";
 and "Measure this PC". `README-FIRST.txt` inside is the guide for whoever helps the
 tester; its text and the form are in `tools/bundle/`.
+
+The Mac version (Apple Silicon) is the same, with `.command` files to double-click and
+llama.cpp's own Mac model server, which `fetch_models` unpacks on a Mac. Build it on a Mac:
+
+```bash
+uv run python -m tools.make_mac_bundle --zip --check
+```
+
+or without one: on GitHub, Actions, then "mac-bundle", then "Run workflow". It builds the
+zip on a GitHub Mac, `--check` starts the bundled service once and waits until the model,
+speech and voice all run, and the zip is kept under the run's Artifacts for two weeks. Its
+files are not signed by an Apple developer yet, so its `README-FIRST.txt` begins with the
+one Terminal command that tells macOS to trust the folder.
 
 ## Layout
 
