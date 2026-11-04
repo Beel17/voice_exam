@@ -3,9 +3,11 @@
     python -m voice_agent.sync.standin --packages DIR --results DIR --centre C1 --token T
     python -m voice_agent.sync.standin --spec spec/sync.openapi.json
 
-Serves every ``*.zip`` in the packages folder as this centre's packages, and keeps the
-results it receives in ``results.jsonl`` in the results folder (one operation per line,
-each once). The real cloud implements the same API (spec/sync.openapi.json).
+Serves every ``*.zip`` in the packages folder as this centre's packages (and those in a
+subfolder as the packages of the centre it is named after), answers who each of their
+candidates is, and keeps the results it receives in ``results.jsonl`` in the results
+folder (one operation per line, each once, with its centre). The real cloud implements
+the same API (spec/sync.openapi.json).
 """
 
 import argparse
@@ -21,7 +23,14 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 
 from voice_agent.examstore.package import read_package
 from voice_agent.sync import models
-from voice_agent.sync.models import BatchReceipt, PackageInfo, PackageList, ResultBatch
+from voice_agent.sync.models import (
+    BatchReceipt,
+    CandidatePackage,
+    CandidateRecord,
+    PackageInfo,
+    PackageList,
+    ResultBatch,
+)
 
 
 def create_app(packages: Path, results: Path, centre_id: str, token: str) -> FastAPI:
@@ -39,31 +48,35 @@ def create_app(packages: Path, results: Path, centre_id: str, token: str) -> Fas
         if not hmac.compare_digest(given.encode(), f"Bearer {token}".encode()):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "not this centre's token")
 
-    def check_centre(centre: str) -> None:
-        if centre != centre_id:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such centre")
+    def centres() -> list[str]:
+        return [centre_id, *sorted(d.name for d in packages.iterdir() if d.is_dir())]
 
-    def files() -> dict[str, tuple[Path, PackageInfo]]:
+    def folder(centre: str) -> Path:
+        if centre not in centres():  # only real folders' names: never a path elsewhere
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such centre")
+        return packages if centre == centre_id else packages / centre
+
+    def files(centre: str | None = None) -> dict[str, tuple[Path, PackageInfo]]:
         found = {}
-        for path in sorted(packages.glob("*.zip")):
-            data = path.read_bytes()
-            package = read_package(data).package
-            info = PackageInfo(
-                package_id=package.package_id,
-                exam_id=package.exam_id,
-                title=package.title,
-                sha256=hashlib.sha256(data).hexdigest(),
-                size=len(data),
-            )
-            found[package.package_id] = (path, info)
+        for c in [centre] if centre else centres():
+            for path in sorted(folder(c).glob("*.zip")):
+                data = path.read_bytes()
+                package = read_package(data).package
+                info = PackageInfo(
+                    package_id=package.package_id,
+                    exam_id=package.exam_id,
+                    title=package.title,
+                    sha256=hashlib.sha256(data).hexdigest(),
+                    size=len(data),
+                )
+                found[package.package_id] = (path, info)
         return found
 
     Auth = Annotated[None, Depends(authorised)]
 
     @app.get("/v1/centres/{centre}/packages")
     def list_packages(centre: str, _: Auth) -> PackageList:
-        check_centre(centre)
-        return PackageList(packages=tuple(info for _, info in files().values()))
+        return PackageList(packages=tuple(info for _, info in files(centre).values()))
 
     @app.get("/v1/packages/{package_id}")
     def get_package(package_id: str, _: Auth) -> Response:
@@ -72,15 +85,40 @@ def create_app(packages: Path, results: Path, centre_id: str, token: str) -> Fas
             raise HTTPException(status.HTTP_404_NOT_FOUND, "no such package")
         return Response(found[0].read_bytes(), media_type="application/zip")
 
+    @app.get("/v1/candidates/{candidate}")
+    def look_up(candidate: str, _: Auth) -> CandidateRecord:
+        """By candidate ID or examination number, in any of the centres' packages."""
+        for centre in centres():
+            for path, _info in files(centre).values():
+                for c in read_package(path.read_bytes()).package.candidates:
+                    if candidate in (c.candidate_id, c.exam_number):
+                        return CandidateRecord(
+                            candidate_id=c.candidate_id,
+                            exam_number=c.exam_number,
+                            centre_id=centre,
+                            centre_code=centre,
+                            status="IN_PROGRESS",
+                        )
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such candidate")
+
+    @app.get("/v1/candidates/{candidate_id}/package")
+    def candidate_package(candidate_id: str, _: Auth) -> CandidatePackage:
+        for centre in centres():
+            for path, info in files(centre).values():
+                ids = {c.candidate_id for c in read_package(path.read_bytes()).package.candidates}
+                if candidate_id in ids:
+                    return CandidatePackage(**info.model_dump(), centre_id=centre)
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such candidate")
+
     @app.post("/v1/centres/{centre}/results")
     def post_results(centre: str, batch: ResultBatch, _: Auth) -> BatchReceipt:
-        check_centre(centre)
+        folder(centre)
         if batch.centre_id != centre:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "batch is for another centre")
         accepted = []
         with log.open("a", encoding="utf-8") as out:
             for op in batch.operations:
-                record = op.model_dump(mode="json")
+                record = {"centre": centre} | op.model_dump(mode="json")
                 seen = received.get(op.operation_id)
                 if seen is not None and seen != record:
                     raise HTTPException(status.HTTP_409_CONFLICT, f"{op.operation_id} differs")

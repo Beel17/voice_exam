@@ -203,3 +203,23 @@ def test_audio_mode_candidates_are_marked(tmp_path: Path) -> None:
 def test_the_shuffle_settings_default_to_on() -> None:
     assert Shuffle() == Shuffle(questions=True, options=True, keep_option_order=())
     assert isinstance(PAPER.candidates[0], PackageCandidate)
+
+
+def test_a_candidate_signs_in_by_number_or_id_in_any_case(tmp_path: Path) -> None:
+    store = store_with(tmp_path)
+    assert store.find_candidate("20260001pr", None).candidate_id == "practice-01"
+    assert store.find_candidate("PRACTICE-02", None).candidate_id == "practice-02"
+
+
+def test_a_store_from_before_centres_keeps_its_papers(tmp_path: Path) -> None:
+    import sqlite3
+
+    store_with(tmp_path).close()
+    db = sqlite3.connect(tmp_path / "exams.db")
+    db.execute("ALTER TABLE exams DROP COLUMN centre")  # as schema 1 was
+    db.execute("UPDATE meta SET value = '1' WHERE key = 'schema_version'")
+    db.commit()
+    db.close()
+    store = ExamStore(tmp_path / "exams.db")
+    assert [e.exam_id for e in store.exams()] == [PAPER.exam_id]
+    assert store.meta("schema_version") == "2"

@@ -6,3 +6,7 @@
 //   window.EXAM_ENGINE = "https://exam-server:8765";
 // and allow the browser's origin in the engine's centre.toml (allowed_origins).
 window.EXAM_ENGINE = "";
+
+// The candidate, when the browser already knows who signs in (their candidate ID or
+// examination number): they are signed in without typing. Or open index.html?candidate=ID.
+//   window.EXAM_CANDIDATE = "...";

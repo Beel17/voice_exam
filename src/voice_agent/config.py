@@ -127,7 +127,17 @@ class SyncSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     url: str | None = None  # https://...
+    # The centre papers are pulled for when none is named, and results of papers loaded
+    # by hand are uploaded as. Papers pulled for a candidate's own centre go back to it.
     centre_id: str | None = None
+    # At sign-in, an examination number or candidate ID not found in an open paper is
+    # looked up on the platform (GET /v1/candidates/{id}); a candidate it confirms is
+    # signed in to their paper, which is pulled for their centre first if not held.
+    look_up_candidates: bool = False
+    # Platform statuses that keep a candidate out even though the platform knows them.
+    refuse_statuses: tuple[str, ...] = Field(default=(), max_length=20)
+    # Which of the platform's fields about a candidate names their centre in the calls.
+    centre_from: Literal["centre_id", "centre_code"] = "centre_id"
     # The centre's token for the cloud, never in this file: in token_file (default
     # <data_dir>/sync-token.txt), or the VOICE_AGENT_SYNC__TOKEN environment variable.
     token_file: Path | None = None

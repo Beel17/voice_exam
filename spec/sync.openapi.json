@@ -19,6 +19,121 @@
         "title": "BatchReceipt",
         "type": "object"
       },
+      "CandidatePackage": {
+        "description": "The package one candidate sits, and the centre it is for.",
+        "properties": {
+          "centre_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9._:/-]{1,64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Centre Id"
+          },
+          "exam_id": {
+            "pattern": "^[A-Za-z0-9._:/-]{1,64}$",
+            "title": "Exam Id",
+            "type": "string"
+          },
+          "package_id": {
+            "pattern": "^[A-Za-z0-9._:/-]{1,64}$",
+            "title": "Package Id",
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size": {
+            "maximum": 536870912.0,
+            "minimum": 1.0,
+            "title": "Size",
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 200,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "package_id",
+          "exam_id",
+          "title",
+          "sha256",
+          "size"
+        ],
+        "title": "CandidatePackage",
+        "type": "object"
+      },
+      "CandidateRecord": {
+        "description": "The cloud's answer about one candidate. Only these fields are used; others the\ncloud sends (names of the centre, exam and session) are ignored.",
+        "properties": {
+          "candidate_id": {
+            "pattern": "^[A-Za-z0-9._:/-]{1,64}$",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "centre_code": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9._:/-]{1,64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Centre Code"
+          },
+          "centre_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9._:/-]{1,64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Centre Id"
+          },
+          "exam_number": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exam Number"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "candidate_id"
+        ],
+        "title": "CandidateRecord",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -234,12 +349,91 @@
     }
   },
   "info": {
-    "description": "The sync API's messages, shared by the centre's client and the stand-in cloud.\n\nThe cloud implements three calls, all authenticated with the centre's bearer token:\n\n    GET  /v1/centres/{centre_id}/packages      the packages assigned to this centre\n    GET  /v1/packages/{package_id}             one package file (a zip; see examstore)\n    POST /v1/centres/{centre_id}/results       a batch of the centre's logged writes\n\nResults are the centre's log of operations, oldest first: every answer saved or cleared\nand every submission, against the paper's own question numbers and letters (never a\ncandidate's shuffled view). The cloud must accept an operation it has already received\n(same ``operation_id``, same content) as a success without applying it again, so a\ncentre can always retry a batch whose reply it lost. spec/sync.openapi.json is the\ngenerated description of this API.\n",
+    "description": "The sync API's messages, shared by the centre's client and the stand-in cloud.\n\nThe cloud implements these calls, all authenticated with the centre's bearer token:\n\n    GET  /v1/centres/{centre_id}/packages      the packages assigned to this centre\n    GET  /v1/packages/{package_id}             one package file (a zip; see examstore)\n    POST /v1/centres/{centre_id}/results       a batch of the centre's logged writes\n    GET  /v1/candidates/{candidate}            who a candidate is, and their centre (only\n                                               if the centre looks candidates up at sign-in)\n    GET  /v1/candidates/{candidate_id}/package the package that candidate sits (optional:\n                                               without it, their centre's are all pulled)\n\n``{candidate}`` is what the candidate signed in with: their candidate ID, or their\nexamination number if the cloud can find them by it; 404 if it cannot.\n\nResults are the centre's log of operations, oldest first: every answer saved or cleared\nand every submission, against the paper's own question numbers and letters (never a\ncandidate's shuffled view). The cloud must accept an operation it has already received\n(same ``operation_id``, same content) as a success without applying it again, so a\ncentre can always retry a batch whose reply it lost. spec/sync.openapi.json is the\ngenerated description of this API.\n",
     "title": "Voice exam sync API (stand-in cloud)",
     "version": "1"
   },
   "openapi": "3.1.0",
   "paths": {
+    "/v1/candidates/{candidate_id}/package": {
+      "get": {
+        "operationId": "candidate_package_v1_candidates__candidate_id__package_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidatePackage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Candidate Package"
+      }
+    },
+    "/v1/candidates/{candidate}": {
+      "get": {
+        "description": "By candidate ID or examination number, in any of the centres' packages.",
+        "operationId": "look_up_v1_candidates__candidate__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate",
+            "required": true,
+            "schema": {
+              "title": "Candidate",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Look Up"
+      }
+    },
     "/v1/centres/{centre}/packages": {
       "get": {
         "operationId": "list_packages_v1_centres__centre__packages_get",

@@ -31,9 +31,14 @@ Bundle the whole folder with the browser and open index.html. All paths are rela
      allowed_origins = ["app://exam-browser"]
    It goes near the top of the file, with the other top-level settings.
 
-3. The engine must be on HTTPS (sudo voice-exam certificate ...) and its certificate
-   trusted by the browser, or the browser will refuse the connection, and audio mode the
-   microphone.
+3. Browsers allow the microphone (audio mode) only on secure pages: serve the pages over
+   HTTPS (the engine itself, with sudo voice-exam certificate ..., or a proxy in front of
+   it), or let the compiled app call the engine over HTTP and use the microphone.
+
+4. To sign a candidate in without typing, open index.html?candidate=CANDIDATE_ID, or set
+   window.EXAM_CANDIDATE = "CANDIDATE_ID" before the app loads. The engine accepts the
+   candidate ID or the examination number, and with look_up_candidates under [sync] asks
+   the platform about candidates it does not hold yet.
 
 The browser must allow: WebSockets to the engine, the microphone (audio mode), and Web
 Audio with an AudioWorklet loaded from the app's own capture-worklet.js. Without the

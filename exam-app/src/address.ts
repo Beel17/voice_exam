@@ -5,6 +5,7 @@
 declare global {
   interface Window {
     EXAM_ENGINE?: string;
+    EXAM_CANDIDATE?: string;
   }
 }
 
@@ -22,4 +23,16 @@ export function engine(path: string): string {
 /** The engine's WebSocket address for ``path``: wss:// when the engine is https://. */
 export function engineSocket(path: string): string {
   return engine(path).replace(/^http/, "ws");
+}
+
+let candidateTaken = false;
+
+/** The candidate the browser says is signing in (?candidate= in the address, or
+ * window.EXAM_CANDIDATE), the first time it is asked for only: after signing out, or a
+ * refusal, the candidate types their number as usual. */
+export function takeGivenCandidate(): string | null {
+  if (candidateTaken) return null;
+  candidateTaken = true;
+  const given = (new URLSearchParams(location.search).get("candidate") ?? window.EXAM_CANDIDATE ?? "").trim();
+  return /^[A-Za-z0-9._:/-]{1,64}$/.test(given) ? given : null;
 }

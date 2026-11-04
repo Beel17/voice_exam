@@ -55,3 +55,8 @@ kind = "local"
 # goes in <data_dir>/sync-token.txt, never in this file.
 # url = "https://exams.example.org"
 # centre_id = "CENTRE-001"
+# Sign in candidates the platform knows, from any centre: look them up when they are not
+# in an open paper here, and pull their centre's papers. Statuses listed are kept out.
+# look_up_candidates = true
+# refuse_statuses = ["COMPLETED", "ABSENT"]
+# centre_from = "centre_id"   # or "centre_code": the field naming their centre

@@ -6,7 +6,8 @@ state (``answers``, ``candidates.submitted_at``) and in an append-only log of op
 (``operations``) that sync uploads and the platform can replay.
 
 A paper must be opened before candidates can sign in to it: a candidate who sits several
-papers has one examination number, and only the open papers are searched for it.
+papers has one examination number, and only the open papers are searched for it. (A
+candidate the platform confirms at sign-in is the exception: see examstore.adapter.)
 """
 
 import json
@@ -24,7 +25,7 @@ from voice_agent.contract import OptionLetter
 from voice_agent.examstore.package import ExamPackage, LoadedPackage, PackageCandidate
 from voice_agent.examstore.versions import Version, make_version
 
-SCHEMA_VERSION: Final = 1
+SCHEMA_VERSION: Final = 2
 _SCHEMA: Final = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS exams (
@@ -35,7 +36,8 @@ CREATE TABLE IF NOT EXISTS exams (
     title       TEXT NOT NULL,
     body        TEXT NOT NULL,          -- the package, without candidates
     imported_at REAL NOT NULL,
-    is_open     INTEGER NOT NULL DEFAULT 0
+    is_open     INTEGER NOT NULL DEFAULT 0,
+    centre      TEXT                    -- pulled for this centre; NULL: loaded by hand
 );
 CREATE TABLE IF NOT EXISTS candidates (
     candidate_id TEXT PRIMARY KEY,
@@ -108,6 +110,7 @@ class UploadRow:
     question: int | None
     choice: str | None
     at: float
+    centre: str | None  # the paper's, if it was pulled for one
 
 
 def version_id_for(exam_id: str, candidate_id: str) -> str:
@@ -131,7 +134,13 @@ class ExamStore:
             self._db.execute(
                 "INSERT OR IGNORE INTO meta VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),)
             )
-        (found,) = self._db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+            (found,) = self._db.execute(
+                "SELECT value FROM meta WHERE key='schema_version'"
+            ).fetchone()
+            if int(found) == 1:  # before papers knew their centre: theirs is the default
+                self._db.execute("ALTER TABLE exams ADD COLUMN centre TEXT")
+                self._db.execute("UPDATE meta SET value = '2' WHERE key = 'schema_version'")
+                found = "2"
         if int(found) != SCHEMA_VERSION:
             raise StoreError(f"{path} has schema {found}; this version needs {SCHEMA_VERSION}")
 
@@ -152,9 +161,10 @@ class ExamStore:
 
     # --- Setting up ---------------------------------------------------------------------
 
-    def import_package(self, loaded: LoadedPackage) -> str:
-        """Load a package. The same package again changes nothing; a different package
-        for an exam that already has answers is refused, so no answer is ever orphaned."""
+    def import_package(self, loaded: LoadedPackage, centre: str | None = None) -> str:
+        """Load a package (pulled for ``centre``, or loaded by hand). The same package again
+        changes nothing; a different package for an exam that already has answers is
+        refused, so no answer is ever orphaned."""
         p = loaded.package
         body = p.model_copy(update={"candidates": ()}).model_dump_json()
         keep = frozenset(p.shuffle.keep_option_order)
@@ -177,7 +187,7 @@ class ExamStore:
                 self._db.execute("DELETE FROM exams WHERE exam_id = ?", (p.exam_id,))
             self._db.execute(
                 "INSERT INTO exams (exam_id, exam_code, package_id, sha256, title, body, "
-                "imported_at, is_open) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "imported_at, is_open, centre) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     p.exam_id,
                     p.exam_code,
@@ -187,6 +197,7 @@ class ExamStore:
                     body,
                     self._clock(),
                     int(was_open),
+                    centre,
                 ),
             )
             for c in p.candidates:
@@ -237,15 +248,16 @@ class ExamStore:
     # --- What the engine asks -----------------------------------------------------------
 
     def find_candidate(self, exam_number: str, exam_code: str | None) -> CandidateRow:
-        """By examination number, among the open papers (or the one ``exam_code`` names)."""
+        """By examination number or candidate ID, in any case, among the open papers (or
+        the one ``exam_code`` names)."""
         query = (
             "SELECT c.candidate_id FROM candidates c JOIN exams e USING (exam_id) "
-            "WHERE c.exam_number = ? AND e.is_open = 1"
+            "WHERE (c.exam_number = :key COLLATE NOCASE OR c.candidate_id = :key COLLATE NOCASE) "
+            "AND e.is_open = 1"
         )
-        args: tuple[str, ...] = (exam_number,)
+        args = {"key": exam_number, "code": exam_code}
         if exam_code:
-            query += " AND (e.exam_code = ? OR e.exam_id = ?)"
-            args += (exam_code, exam_code)
+            query += " AND (e.exam_code = :code OR e.exam_id = :code)"
         with self._lock:
             found = self._db.execute(query, args).fetchall()
         if len(found) != 1:
@@ -253,6 +265,15 @@ class ExamStore:
             # number, and guessing which would put the candidate in the wrong exam.
             raise StoreError("not_registered" if not found else "ambiguous")
         return self.candidate(found[0][0])
+
+    def has_candidate(self, candidate_id: str) -> bool:
+        with self._lock:
+            return (
+                self._db.execute(
+                    "SELECT 1 FROM candidates WHERE candidate_id = ?", (candidate_id,)
+                ).fetchone()
+                is not None
+            )
 
     def candidate(self, candidate_id: str) -> CandidateRow:
         with self._lock:
@@ -375,7 +396,8 @@ class ExamStore:
         with self._lock:
             rows = self._db.execute(
                 "SELECT o.seq, o.operation_id, o.candidate_id, c.exam_id, o.kind, o.question, "
-                "o.choice, o.at FROM operations o JOIN candidates c USING (candidate_id) "
+                "o.choice, o.at, e.centre FROM operations o JOIN candidates c USING "
+                "(candidate_id) JOIN exams e USING (exam_id) "
                 "WHERE o.uploaded = 0 ORDER BY o.seq LIMIT ?",
                 (limit,),
             ).fetchall()

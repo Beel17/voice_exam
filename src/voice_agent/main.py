@@ -28,6 +28,8 @@ from voice_agent.session.events import SessionStore
 from voice_agent.session.manager import SessionManager
 from voice_agent.speech.stt import MODEL_FILES, Recognizer, SherpaRecognizer
 from voice_agent.speech.tts import SherpaSynthesizer, Synthesizer
+from voice_agent.sync.client import SyncError, client_for
+from voice_agent.sync.lookup import CandidateLookup
 from voice_agent.understanding.llm import (
     LlamaServer,
     LlmUnderstander,
@@ -44,6 +46,7 @@ OUTBOX_EVERY_S: Final = 5.0
 TIME_EVERY_S: Final = 30.0
 MODEL_CHECK_EVERY_S: Final = 5.0
 LOAD_CHECK_EVERY_S: Final = 1.0
+LOOKUP_TIMEOUT_S: Final = 20.0  # one call to the platform at sign-in, a paper's download
 CLIENT_DIR: Final = Path(__file__).parent / "client"
 # The exam app (exam-app/, built by `npm run build` into here; not kept in git).
 EXAM_APP_DIR: Final = Path(__file__).parent / "exam"
@@ -59,7 +62,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         store = await SessionStore.open(settings.data_dir / "sessions.db")
-        platform, close_platform = (adapter, _nothing) if adapter else _adapter(settings)
+        platform, close_platform = (adapter, _nothing) if adapter else await _adapter(settings)
         llm_server, understander, model_note = await _start_language_model(settings)
         owned_recognizer = None if recognizer else await _start_recognizer(settings)
         owned_synthesizer = None if synthesizer else await _start_synthesizer(settings)
@@ -111,7 +114,7 @@ def create_app(
             if owned_synthesizer is not None:
                 await owned_synthesizer.stop()
             await store.close()
-            close_platform()
+            await close_platform()
 
     # No interactive docs: they load assets from the internet, and the service is offline.
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
@@ -170,11 +173,11 @@ def _mount_exam_app(app: FastAPI, directory: Path) -> None:
         )
 
 
-def _nothing() -> None:
+async def _nothing() -> None:
     pass
 
 
-def _adapter(settings: Settings) -> tuple[ExamDataAdapter, Callable[[], None]]:
+async def _adapter(settings: Settings) -> tuple[ExamDataAdapter, Callable[[], Awaitable[None]]]:
     """The platform, and how to let go of it at shutdown."""
     match settings.adapter.kind:
         case "fake":
@@ -185,7 +188,28 @@ def _adapter(settings: Settings) -> tuple[ExamDataAdapter, Callable[[], None]]:
             return fake, _nothing
         case "local":
             store = ExamStore(settings.data_dir / "exams.db")
-            return LocalAdapter(store), store.close
+            lookup = _candidate_lookup(settings, store)
+
+            async def close() -> None:
+                if lookup is not None:
+                    await lookup.aclose()
+                store.close()
+
+            return LocalAdapter(store, admit=lookup), close
+
+
+def _candidate_lookup(settings: Settings, store: ExamStore) -> CandidateLookup | None:
+    """Sign-in asking the platform about candidates not held here, if set up to. If sync
+    is not set up, sign-in still works for the papers held, and the log says why."""
+    if not settings.sync.look_up_candidates:
+        return None
+    try:
+        client = client_for(settings, store, timeout_s=LOOKUP_TIMEOUT_S)
+    except SyncError as e:
+        log.error("candidates are not looked up on the platform: %s", e)
+        return None
+    log.info("candidates not held here are looked up on the platform")
+    return CandidateLookup(client, store, settings.sync.refuse_statuses, settings.sync.centre_from)
 
 
 async def _start_recognizer(settings: Settings) -> SherpaRecognizer | None:

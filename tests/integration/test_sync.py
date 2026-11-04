@@ -6,6 +6,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from voice_agent.adapters.base import AdapterRejected, AdapterUnavailable
 from voice_agent.examstore.__main__ import sample_package
 from voice_agent.examstore.adapter import LocalAdapter
 from voice_agent.examstore.package import write_package
@@ -135,3 +136,159 @@ def test_the_published_api_description_is_current() -> None:
     assert published.read_text(encoding="utf-8") == openapi_json(), (
         "spec is stale: uv run python -m voice_agent.sync.standin --spec spec/sync.openapi.json"
     )
+
+
+# --- Candidates from any centre: looked up at sign-in -------------------------------------
+
+
+def other_centres_paper(cloud: Cloud, centre: str = "C2", paper_id: str = "other") -> None:
+    """A second paper, with its own candidates, assigned to another centre."""
+    paper = sample_package()
+    paper = paper.model_copy(
+        update={
+            "package_id": f"{paper_id}-paper-1",
+            "exam_id": f"exam-{paper_id}",
+            "outline": paper.outline.model_copy(update={"exam_id": f"exam-{paper_id}"}),
+            "candidates": tuple(
+                c.model_copy(
+                    update={
+                        "candidate_id": f"{centre}{paper_id}-{c.candidate_id}",
+                        "exam_number": f"{centre}{paper_id}{k}",
+                    }
+                )
+                for k, c in enumerate(paper.candidates, 1)
+            ),
+        }
+    )
+    (cloud.packages / centre).mkdir(exist_ok=True)
+    (cloud.packages / centre / f"{paper_id}.zip").write_bytes(write_package(paper))
+
+
+async def test_results_go_back_to_the_centre_each_paper_was_pulled_for(cloud: Cloud) -> None:
+    other_centres_paper(cloud)
+    client = cloud.client()
+    await client.pull()
+    assert (await client.pull("C2")).imported == ("other-paper-1",)
+    await answered(cloud, 1)  # C1's paper: 2 operations
+    cloud.store.set_open("exam-other", True)
+    platform = LocalAdapter(cloud.store)
+    session = await platform.verify_candidate("C2other1", "")
+    await platform.save_answer(session.candidate_id, 1, "B", "o:1")
+    assert await client.push() == 3
+    by_centre = {(op["centre"], op["operation_id"]) for op in cloud.received()}
+    assert by_centre == {("C1", "s:1"), ("C1", "s:submit"), ("C2", "o:1")}
+    await client.aclose()
+
+
+async def test_the_platform_says_who_a_candidate_is(cloud: Cloud) -> None:
+    other_centres_paper(cloud)
+    client = cloud.client()
+    by_number = await client.look_up("C2other1")
+    by_id = await client.look_up("C2other-practice-01")
+    assert by_number == by_id and by_id is not None
+    assert (by_id.candidate_id, by_id.centre_id) == ("C2other-practice-01", "C2")
+    assert await client.look_up("NOBODY") is None
+    await client.aclose()
+
+
+async def test_a_candidate_the_platform_knows_is_signed_in_from_any_centre(cloud: Cloud) -> None:
+    from voice_agent.sync.lookup import CandidateLookup
+
+    other_centres_paper(cloud)
+    platform = LocalAdapter(cloud.store, admit=CandidateLookup(cloud.client(), cloud.store))
+    # Nothing held yet: the paper comes down for the candidate's centre, closed as it is.
+    session = await platform.verify_candidate("C2other3", "")
+    assert session.candidate_id == "C2other-practice-03"
+    assert [(e.exam_id, e.is_open) for e in cloud.store.exams()] == [("exam-other", False)]
+    # By candidate ID too, as a browser that knows who is signing in sends it.
+    assert (
+        await platform.verify_candidate("C2other-practice-04", "")
+    ).candidate_id == "C2other-practice-04"
+    with pytest.raises(AdapterRejected):
+        await platform.verify_candidate("NOBODY", "")
+
+
+async def test_many_sign_ins_at_once_pull_their_centres_papers_once(cloud: Cloud) -> None:
+    import asyncio
+
+    from voice_agent.sync.lookup import CandidateLookup
+
+    other_centres_paper(cloud)
+    inner = httpx.ASGITransport(app=cloud.app)
+    downloads = []
+
+    class Counting(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            if "/v1/packages/" in request.url.path:
+                downloads.append(request.url.path)
+            return await inner.handle_async_request(request)
+
+    platform = LocalAdapter(
+        cloud.store, admit=CandidateLookup(cloud.client(Counting()), cloud.store)
+    )
+    sessions = await asyncio.gather(
+        *(platform.verify_candidate(f"C2other{k}", "") for k in range(1, 7))
+    )
+    assert len({s.candidate_id for s in sessions}) == 6
+    assert downloads == ["/v1/packages/other-paper-1"]
+
+
+async def test_statuses_the_centre_refuses_keep_a_candidate_out(cloud: Cloud) -> None:
+    from voice_agent.sync.lookup import CandidateLookup
+
+    other_centres_paper(cloud)
+    lookup = CandidateLookup(cloud.client(), cloud.store, refuse_statuses=["in_progress"])
+    with pytest.raises(AdapterRejected):
+        await LocalAdapter(cloud.store, admit=lookup).verify_candidate("C2other1", "")
+    assert cloud.store.exams() == []  # nothing pulled for someone kept out
+
+
+async def test_a_platform_that_cannot_be_reached_is_said_plainly(cloud: Cloud) -> None:
+    from voice_agent.sync.lookup import CandidateLookup
+
+    class Down(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("refused", request=request)
+
+    lookup = CandidateLookup(cloud.client(Down()), cloud.store)
+    with pytest.raises(AdapterUnavailable):
+        await LocalAdapter(cloud.store, admit=lookup).verify_candidate("C2other1", "")
+
+
+async def test_the_centre_comes_from_the_field_the_centre_names() -> None:
+    from voice_agent.sync.models import CandidateRecord
+
+    record = CandidateRecord.model_validate_json(
+        '{"candidate_id": "c1", "centre_id": "a1b2", "centre_code": "ABI-03", '
+        '"centre_name": "Main Hall", "status": "IN_PROGRESS"}'
+    )
+    assert (record.centre_id, record.centre_code) == ("a1b2", "ABI-03")  # others ignored
+
+
+async def test_only_the_candidates_own_paper_comes_down(cloud: Cloud) -> None:
+    from voice_agent.sync.lookup import CandidateLookup
+
+    other_centres_paper(cloud)
+    other_centres_paper(cloud, paper_id="second")
+    platform = LocalAdapter(cloud.store, admit=CandidateLookup(cloud.client(), cloud.store))
+    await platform.verify_candidate("C2second2", "")
+    assert [e.exam_id for e in cloud.store.exams()] == ["exam-second"]
+
+
+async def test_without_the_paper_call_the_centres_papers_all_come_down(cloud: Cloud) -> None:
+    from voice_agent.sync.lookup import CandidateLookup
+
+    other_centres_paper(cloud)
+    other_centres_paper(cloud, paper_id="second")
+    inner = httpx.ASGITransport(app=cloud.app)
+
+    class OlderPlatform(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/package"):
+                return httpx.Response(404, json={"detail": "Not Found"})
+            return await inner.handle_async_request(request)
+
+    lookup = CandidateLookup(cloud.client(OlderPlatform()), cloud.store)
+    session = await LocalAdapter(cloud.store, admit=lookup).verify_candidate("C2second2", "")
+    assert session.candidate_id == "C2second-practice-02"
+    assert sorted(e.exam_id for e in cloud.store.exams()) == ["exam-other", "exam-second"]

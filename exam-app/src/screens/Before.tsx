@@ -1,7 +1,8 @@
 // Everything before the first question: setting up the PC (once, by the invigilator),
 // the starter guide, signing in, and the instructions with the identity check.
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import { takeGivenCandidate } from "../address";
 import { Brand, duration, Photo, usePhoto } from "../components";
 import { useExam } from "../exam";
 
@@ -116,6 +117,12 @@ export function Login({ onGuide }: { onGuide: () => void }) {
   const [number, setNumber] = useState("");
   const value = number.trim().toUpperCase();
   const valid = /^[A-Z0-9._:/-]{1,64}$/.test(value);
+  // Signed in by the browser that opened the app, if it named the candidate.
+  useEffect(() => {
+    if (exam.link !== "online" || exam.signingIn) return;
+    const given = takeGivenCandidate();
+    if (given) login(given);
+  }, [exam.link, exam.signingIn, login]);
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (valid && !exam.signingIn) login(value);

@@ -4,11 +4,14 @@ The engine sees each candidate's own version of the paper (``CandidateSession.ex
 is the version's ID): questions in the candidate's order, options lettered as shown.
 Everything written goes back to the paper's numbers and letters here, so nothing else
 needs to know about versions.
+
+With ``admit`` (sync.lookup), a candidate not found in an open paper is asked about on
+the platform, which may confirm them and bring their paper here first.
 """
 
 import asyncio
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Final
 
 from voice_agent.adapters.base import (
@@ -27,9 +30,15 @@ _REASONS: Final = {r.value: r for r in RejectReason} | {"ambiguous": RejectReaso
 
 
 class LocalAdapter:
-    def __init__(self, store: ExamStore, clock: Callable[[], float] = time.time) -> None:
+    def __init__(
+        self,
+        store: ExamStore,
+        clock: Callable[[], float] = time.time,
+        admit: Callable[[str], Awaitable[str]] | None = None,
+    ) -> None:
         self._store = store
         self._clock = clock
+        self._admit = admit  # what the candidate signed in with -> their candidate ID
 
     async def _run[T](self, fn: Callable[[], T]) -> T:
         try:
@@ -38,12 +47,21 @@ class LocalAdapter:
             raise AdapterRejected(_REASONS.get(e.reason, RejectReason.NO_SUCH_EXAM)) from None
 
     async def verify_candidate(self, reg_no: str, exam_code: str) -> CandidateSession:
-        def verify() -> CandidateSession:
-            c = self._store.find_candidate(reg_no, exam_code or None)
+        def verify(admitted: str | None = None) -> CandidateSession:
+            if admitted is None:
+                c = self._store.find_candidate(reg_no, exam_code or None)
+            else:
+                c = self._store.candidate(admitted)
             self._store.start(c.candidate_id)
             return CandidateSession(candidate_id=c.candidate_id, exam_id=c.version_id)
 
-        return await self._run(verify)
+        try:
+            return await self._run(verify)
+        except AdapterRejected as e:
+            if self._admit is None or e.reason is not RejectReason.NOT_REGISTERED:
+                raise
+        admitted = await self._admit(reg_no)
+        return await self._run(lambda: verify(admitted))
 
     async def get_exam_outline(self, exam_id: str) -> ExamOutline:
         def outline() -> ExamOutline:

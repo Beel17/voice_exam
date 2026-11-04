@@ -3,6 +3,7 @@
 // type, for candidates with some sight and for the invigilator.
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { takeGivenCandidate } from "../address";
 import { Brand, clock, Photo, useNow, usePhoto } from "../components";
 import { secondsLeft, useExam } from "../exam";
 import type { Key } from "../protocol";
@@ -131,13 +132,16 @@ export function AudioStart() {
         } else if (next === "mic") {
           await guide("mic_check");
         } else if (next === "sign_in") {
-          await guide("sign_in");
+          // Named by the browser that opened the app: no examination number to say.
+          const given = takeGivenCandidate();
+          if (given) login(given);
+          else await guide("sign_in");
         }
       } catch (e) {
         setProblem(`Audio could not start: ${(e as Error).message}`);
       }
     },
-    [startAudio, guide, tone, silence],
+    [startAudio, guide, tone, silence, login],
   );
 
   useTalkKey(stage === "mic" || stage === "sign_in");
